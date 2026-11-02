@@ -1,5 +1,6 @@
 import type { PaseoApi } from "@getpaseo/client";
 import { BOT_LABEL, buildAgentConfig, defaultModelId, type Bot, type Library, type PluginServers } from "./bot";
+import type { ChatConfig } from "./chat-config";
 
 /** Label on chats started by a routine, carrying the routine id. */
 export const ROUTINE_LABEL = "paseo-bots.routine";
@@ -69,6 +70,7 @@ export async function syncBotWorkspaceTitle(api: PaseoApi, bot: Bot, placement: 
 
 export interface StartChatInput {
   bot: Bot;
+  config?: ChatConfig;
   /** Resolves the bot's MCP servers. */
   library: Library;
   /** The chat's agent id, picked in advance so its tools URL can name it. */
@@ -91,12 +93,13 @@ export interface StartChatInput {
  * and sends the first message. Used by the app and by the routine scheduler.
  */
 export async function startBotChat(api: PaseoApi, input: StartChatInput): Promise<string> {
-  const { bot } = input;
+  const { featureValues, ...overrides } = input.config ?? {};
+  const bot = { ...input.bot, ...overrides };
   const model = bot.model ?? (await resolveDefaultModel(api, bot.provider));
   const workspace = await ensureBotWorkspace(api, bot, input.placement);
   const agent = await workspace.agents.create({
     ...(input.agentId ? { agentId: input.agentId } : {}),
-    config: buildAgentConfig(bot, input.library, model, input.systemPrompt, input.plugin),
+    config: { ...buildAgentConfig(bot, input.library, model, input.systemPrompt, input.plugin), ...(featureValues ? { featureValues } : {}) },
     labels: { [BOT_LABEL]: bot.id, ...input.labels },
     prompt: input.prompt,
     ...(input.title ? { title: input.title.slice(0, MAX_TITLE_CHARS) } : {}),

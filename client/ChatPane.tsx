@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Pressable, Text, View, type LayoutRectangle } from "react-native";
 import type { toWire } from "../shared/attachments";
 import type { Bot } from "../shared/bot";
+import type { ChatConfig } from "../shared/chat-config";
 import { displayTitle } from "../shared/chat";
 import { Avatar } from "./Avatar";
 import { Composer } from "./chat/Composer";
@@ -40,6 +41,7 @@ export interface ChatPaneProps {
 }
 
 export interface OutgoingMessage {
+  config?: ChatConfig;
   text: string;
   messageId: string;
   images: { data: string; mimeType: string }[];
@@ -79,7 +81,7 @@ export function ChatPane({ colors, bot, host, chat, chatId, panelOpen, layout, k
           ) : null}
         </View>
       ) : (
-        <ChatStream key={chatId} colors={colors} chat={chat} api={host.api} agentId={chatId} compact={layout.compact} platform={layout.platform} typeVersion={typeVersion} onOpenChat={onOpenChat} voice={bot.voice} findOpen={findOpen} onCloseFind={() => setFindOpen(false)} {...(host.isLocal ? { botId: bot.id } : {})} />
+        <ChatStream key={chatId} colors={colors} chat={chat} api={host.api} agentId={chatId} compact={layout.compact} platform={layout.platform} typeVersion={typeVersion} onOpenChat={onOpenChat} botAvatar={bot.avatar} botName={bot.name} voice={bot.voice} findOpen={findOpen} onCloseFind={() => setFindOpen(false)} {...(host.isLocal ? { botId: bot.id } : {})} />
       )}
       <Composer colors={colors} bot={bot} host={host} agentId={chatId} agent={chat.agent} running={running} layout={layout} keyboardOpen={keyboardOpen} onStart={onStart} />
     </View>

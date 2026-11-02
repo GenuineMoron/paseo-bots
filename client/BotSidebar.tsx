@@ -38,6 +38,8 @@ export interface ChatMenuContext {
 }
 
 interface BotSidebarProps {
+  /** A bot-specific screen has no global bot/team creation controls. */
+  focused?: boolean;
   colors: Colors;
   bots: readonly Bot[];
   /** With teams, the open team tab: the list shows its bots. */
@@ -77,7 +79,7 @@ export function BotSidebar(props: BotSidebarProps) {
   const listedBots = new Map(shown.map((bot) => [bot.id, bot]));
   const pins = listUi.pinnedChats.filter((pin) => listedBots.has(pin.botId));
   const leadId = openTab?.group?.leadId ?? null;
-  if (props.splash && bots.length === 0 && hiddenArchivedCount === 0 && pins.length === 0 && !openTab) {
+  if (!props.focused && props.splash && bots.length === 0 && hiddenArchivedCount === 0 && pins.length === 0 && !openTab) {
     return (
       <View style={{ flex: 1, paddingBottom: bottomInset, backgroundColor: tokens.surfaceSidebar }}>
         <Splash colors={colors} background={tokens.surfaceSidebar} />
@@ -94,7 +96,7 @@ export function BotSidebar(props: BotSidebarProps) {
         contentContainerStyle={{ paddingHorizontal: 8, paddingTop: 2, paddingBottom: 16 }}
       >
         {pins.length > 0 ? <PinnedSection {...props} pins={pins} botById={listedBots} tokens={tokens} /> : null}
-        {shown.length > 0 || hiddenArchivedCount > 0 ? <SectionHeader colors={colors} onDisplayMenu={props.onDisplayMenu} /> : null}
+        {shown.length > 0 || hiddenArchivedCount > 0 ? <SectionHeader colors={colors} title={props.focused ? "Sessions" : "Bots"} onDisplayMenu={props.onDisplayMenu} /> : null}
         {shown.map((bot) => (
           <BotGroup key={bot.id} {...props} tokens={tokens} bot={bot} lead={bot.id === leadId} pinnedIds={pinnedIds} />
         ))}
@@ -109,23 +111,23 @@ export function BotSidebar(props: BotSidebarProps) {
               action={{ icon: "Archive", label: "Show archived", onPress: onShowArchived }}
             />
           ) : (
-            <EmptyState colors={colors} title="No bots yet" description="Create a bot to get started" action={{ icon: "Plus", label: "New bot", onPress: onNewBot }} />
+            props.focused ? <EmptyState colors={colors} title="Bot unavailable" description="This bot may have been deleted. Choose another bot from the sidebar." /> : <EmptyState colors={colors} title="No bots yet" description="Create a bot to get started" action={{ icon: "Plus", label: "New bot", onPress: onNewBot }} />
           )
         ) : null}
       </ScrollView>
-      <Footer colors={colors} onNewBot={onNewBot} onTeamMap={onTeamMap} />
+      {!props.focused ? <Footer colors={colors} onNewBot={onNewBot} onTeamMap={onTeamMap} /> : null}
     </View>
   );
 }
 
 // ------------------------------------------------------------------ header / footer / empty
 
-function SectionHeader({ colors, onDisplayMenu }: { colors: Colors; onDisplayMenu(anchor: LayoutRectangle): void }) {
+function SectionHeader({ colors, title, onDisplayMenu }: { colors: Colors; title: string; onDisplayMenu(anchor: LayoutRectangle): void }) {
   const ref = useRef<View>(null);
   const { hovered, hoverProps } = useHover();
   return (
     <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, paddingLeft: 8, paddingRight: 4, paddingTop: 4, paddingBottom: 4 }}>
-      <Text style={[{ fontSize: ui(12), color: colors.foregroundMuted }, noSelect]}>Bots</Text>
+      <Text style={[{ fontSize: ui(12), color: colors.foregroundMuted }, noSelect]}>{title}</Text>
       <Pressable
         ref={ref}
         accessibilityRole="button"
@@ -198,12 +200,12 @@ function FooterIconButton({ colors, icon, label, onPress }: { colors: Colors; ic
 }
 
 /** Paseo's SidebarProjectEmptyState (sidebar/empty-states.tsx). */
-function EmptyState({ colors, title, description, action }: { colors: Colors; title: string; description: string; action: { icon: string; label: string; onPress(): void } }) {
+function EmptyState({ colors, title, description, action }: { colors: Colors; title: string; description: string; action?: { icon: string; label: string; onPress(): void } }) {
   return (
     <View style={{ marginHorizontal: 8, marginTop: 16, paddingTop: 24, paddingBottom: 16, paddingHorizontal: 16, borderRadius: 8, backgroundColor: colors.surface0, alignItems: "center", gap: 12 }}>
       <Text style={{ color: colors.foreground, fontSize: ui(12), fontWeight: "500", textAlign: "center" }}>{title}</Text>
       <Text style={{ color: colors.foregroundMuted, fontSize: ui(12), textAlign: "center" }}>{description}</Text>
-      <GhostButton colors={colors} icon={action.icon} label={action.label} onPress={action.onPress} />
+      {action ? <GhostButton colors={colors} icon={action.icon} label={action.label} onPress={action.onPress} /> : null}
     </View>
   );
 }
@@ -319,7 +321,7 @@ function BotGroup(props: GroupProps) {
     else if (ordered.length > 0 || draftSelected) {
       children = (
         <>
-          {draftSelected && ordered.length > 0 ? <NewChatGhostRow colors={colors} tokens={tokens} selected onPress={() => onSelect({ botId: bot.id, chatId: null })} /> : null}
+          {(draftSelected || props.focused) && ordered.length > 0 ? <NewChatGhostRow colors={colors} tokens={tokens} selected={draftSelected} onPress={() => onSelect({ botId: bot.id, chatId: null })} /> : null}
           {visible.map((chat) => (
             <ChatRow
               key={chat.id}
@@ -344,7 +346,7 @@ function BotGroup(props: GroupProps) {
 
   return (
     <View role="group" accessibilityLabel={bot.name} style={{ paddingBottom: children ? 12 : 0 }}>
-      <BotRow {...props} isOpen={isOpen} aggregate={aggregate} hostLabel={host.online ? null : host.label} />
+      {!props.focused ? <BotRow {...props} isOpen={isOpen} aggregate={aggregate} hostLabel={host.online ? null : host.label} /> : null}
       {children}
     </View>
   );

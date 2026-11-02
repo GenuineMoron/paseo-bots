@@ -1,6 +1,7 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { z } from "zod";
 import { BotsSurface } from "./client/BotsSurface";
+import { BotSessionsScreen, BotShortcuts } from "./client/BotShortcuts";
 import { NativeConnectCard } from "./client/chat/stream/ConnectCard";
 import { ProposalCard } from "./client/chat/stream/ProposalCard";
 import { RoutineRunCard } from "./client/chat/stream/RoutineRunCard";
@@ -18,7 +19,8 @@ export default function contribute(client: PluginClientContext) {
   void client.rpc(helloRpc, {}).catch(() => {});
   const removeTooltips = installTooltips();
   client.addSurface("bots", BotsSurface);
-  client.addSidebarItem({ id: "bots", title: "Bots", icon: "Bot", surface: "bots" });
+  client.addScreen({ id: "bot-sessions", title: (params) => params.botName || "Bot sessions", Component: BotSessionsScreen });
+  client.addSidebarHeaderItem({ id: "bot-shortcuts", title: "Bots section", Component: BotShortcuts });
   client.addSettingsScreen({ id: "bots", title: "Bots", icon: "Bot", Component: BotsSettings });
   client.addCommandCenterItem({
     id: "open-bots",

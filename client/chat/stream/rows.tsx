@@ -3,11 +3,13 @@ import { Icon, Modal, useRevealedText } from "@getpaseo/plugin/client/react-nati
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Image, Pressable, Text, View } from "react-native";
 import type { ComposerAttachment } from "../../../shared/attachments";
+import type { BotAvatar } from "../../../shared/bot";
 import { capMessageForRender, formatDuration, formatMessageTimestamp, utf8ByteLength } from "../../../shared/markdown";
 import { appSignIns } from "../../../shared/apps";
 import { proposalIdOf } from "../../../shared/proposals";
 import { buildToolCallPresentation, type TaskActivity, type TaskEntry, type ToolCallDetail, type ToolCallStatus } from "../../../shared/tools";
 import { AttachmentPill } from "../../AttachmentPill";
+import { Avatar } from "../../Avatar";
 import { Markdown } from "../../Markdown";
 import { CONTENT_MAX_WIDTH, nativeTokens } from "../../native";
 import { canSpeak } from "../../speech";
@@ -29,6 +31,8 @@ const METADATA_SIZE = 13;
 const TIMESTAMP_REVEAL_MS = 3000;
 
 export interface RowContext {
+  botAvatar?: BotAvatar;
+  botName?: string;
   colors: Colors;
   /** Phone-sized layout: details open in a sheet, controls stay visible. */
   compact: boolean;
@@ -64,7 +68,7 @@ export function RowContent({ row, context, compactBottom }: { row: StreamRow; co
     case "user":
       return <UserMessage colors={colors} compact={context.compact} text={row.text} timestamp={row.timestamp} attachments={context.attachmentsFor(row)} />;
     case "assistant":
-      return <AssistantMessage colors={colors} text={row.text} phase={row.phase} compactBottom={compactBottom} />;
+      return <AssistantMessage colors={colors} text={row.text} phase={row.phase} compactBottom={compactBottom} avatar={context.botAvatar} name={context.botName} compact={context.compact} />;
     case "thought":
       return <ThoughtRow colors={colors} compact={context.compact} text={row.text} loading={row.loading} />;
     case "tool": {
@@ -180,14 +184,17 @@ function Lightbox({ colors, image, onClose }: { colors: Colors; image: ImageAtta
 
 // ---------------------------------------------------------------- assistant
 
-const AssistantMessage = memo(function AssistantMessage({ colors, text, phase, compactBottom }: { colors: Colors; text: string; phase: "streaming" | "complete"; compactBottom: boolean }) {
+const AssistantMessage = memo(function AssistantMessage({ colors, text, phase, compactBottom, avatar, name, compact }: { colors: Colors; text: string; phase: "streaming" | "complete"; compactBottom: boolean; avatar?: BotAvatar; name?: string; compact: boolean }) {
   const capped = useMemo(() => capMessageForRender(text), [text]);
   const revealed = useRevealedText(capped.text, phase);
   const bytes = useMemo(() => (capped.capped && phase === "complete" ? utf8ByteLength(text) : null), [capped.capped, phase, text]);
   return (
-    <View style={{ paddingTop: 12, paddingBottom: compactBottom ? 0 : 12, ...(isWeb ? ({ userSelect: "text" } as object) : {}) }}>
-      <Markdown colors={colors} text={revealed} streaming={phase === "streaming"} />
-      {bytes !== null ? <Text style={{ marginTop: 12, fontSize: ui(14), fontStyle: "italic", color: colors.foregroundMuted }}>This message was capped ({bytes} bytes).</Text> : null}
+    <View style={{ flexDirection: "row", alignItems: "flex-start", gap: compact ? 8 : 12, paddingTop: 12, paddingBottom: compactBottom ? 0 : 12, ...(isWeb ? ({ userSelect: "text" } as object) : {}) }}>
+      {avatar ? <View accessibilityLabel={name ? `${name}'s avatar` : "Bot avatar"} style={{ flexShrink: 0, paddingTop: 2 }}><Avatar avatar={avatar} size={compact ? 28 : 32} /></View> : null}
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Markdown colors={colors} text={revealed} streaming={phase === "streaming"} />
+        {bytes !== null ? <Text style={{ marginTop: 12, fontSize: ui(14), fontStyle: "italic", color: colors.foregroundMuted }}>This message was capped ({bytes} bytes).</Text> : null}
+      </View>
     </View>
   );
 });

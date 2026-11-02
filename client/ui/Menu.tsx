@@ -163,7 +163,7 @@ function Popover({ colors, spec, origin, onClose }: { colors: Colors; spec: Menu
   );
 }
 
-function Entries({ colors, entries, compact, onClose }: { colors: Colors; entries: MenuEntry[]; compact: boolean; onClose(): void }) {
+export function Entries({ colors, entries, compact, onClose }: { colors: Colors; entries: MenuEntry[]; compact: boolean; onClose(): void }) {
   const tokens = nativeTokens(colors);
   return (
     <>

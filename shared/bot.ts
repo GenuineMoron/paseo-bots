@@ -288,6 +288,8 @@ export const botSettings = defineSettings({
   version: 3,
   schema: z.object({
     bots: z.array(BotSchema).default([]),
+    /** Manual order for the host sidebar; old settings retain their pinned-first order. */
+    sidebarBotOrder: z.array(z.string()).optional(),
     history: z.array(HistoryEntrySchema).default([]),
     /** Optional so documents written before it existed (and by older clients) stay valid. */
     ui: BotListUiSchema.optional(),

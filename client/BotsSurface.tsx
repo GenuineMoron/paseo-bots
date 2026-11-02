@@ -21,7 +21,7 @@ import { botMenuEntries, chatMenuEntries, ExportDialog, NewBotDialog, RenameDial
 import { BotSidebar, type ChatMenuContext, type MenuSource, type Selection } from "./BotSidebar";
 import { ChatPane, type OutgoingMessage } from "./ChatPane";
 import { useBotHost, useChatInvalidation, useHostResolver, useProviders, type LocalHost } from "./data";
-import { takeIntent } from "./intent";
+import { onIntent, peekIntent, takeIntent } from "./intent";
 import { LibraryView } from "./library/LibraryView";
 import { onLibraryTarget, type LibraryTarget } from "./navigation";
 import { Splash } from "./Splash";
@@ -50,7 +50,11 @@ const SETUP_PROMPT =
 /** Autosave delay after the last edit in the settings panel. */
 const SAVE_DELAY_MS = 600;
 
-export function BotsSurface(props: PluginSurfaceProps) {
+interface BotsSurfaceProps extends PluginSurfaceProps {
+  focusedBotId?: string;
+}
+
+export function BotsSurface(props: BotsSurfaceProps) {
   const { colors } = props.theme;
   useTooltipTheme(colors);
   return (
@@ -63,7 +67,7 @@ export function BotsSurface(props: PluginSurfaceProps) {
 }
 
 
-function BotsSurfaceContent({ theme, layout, host, navigation }: PluginSurfaceProps) {
+function BotsSurfaceContent({ theme, layout, host, navigation, focusedBotId }: BotsSurfaceProps) {
   const { colors } = theme;
   const { settings, latest, commit } = useBotSettings();
   const toast = useToast();
@@ -76,7 +80,8 @@ function BotsSurfaceContent({ theme, layout, host, navigation }: PluginSurfacePr
   const importBot = useRpc(importBotRpc);
   const importTeam = useRpc(importTeamRpc);
 
-  const [selection, setSelection] = useState<Selection | null>(null);
+  const [selection, setSelection] = useState<Selection | null>(focusedBotId ? { botId: focusedBotId, chatId: null } : null);
+  const [focusedCollapsed, setFocusedCollapsed] = useState(false);
   const [panel, setPanel] = useState<{ open: boolean; section: SectionId | null }>({ open: false, section: null });
   const [panelVersion, setPanelVersion] = useState(0);
   const [creating, setCreating] = useState(false);
@@ -219,11 +224,16 @@ function BotsSurfaceContent({ theme, layout, host, navigation }: PluginSurfacePr
     return () => subscription.remove();
   }, []);
 
-  // "New bot" from the Command Center opens a fresh Bots screen; only that one consumes it.
+  const consumeIntent = useRef<() => void>(() => {});
+  consumeIntent.current = () => {};
+  // Sidebar actions can target either an already-open screen or a newly mounted route.
   useEffect(() => {
-    const intent = takeIntent();
-    if (intent?.kind === "new-bot") setCreating(true);
+    const listener = () => consumeIntent.current();
+    const unsubscribe = onIntent(listener);
+    listener();
+    return unsubscribe;
   }, []);
+  useEffect(() => consumeIntent.current(), [settings.status, focusedBotId]);
 
   if (settings.status !== "ready") {
     return (
@@ -252,16 +262,16 @@ function BotsSurfaceContent({ theme, layout, host, navigation }: PluginSurfacePr
     setDragWidths({});
     updateUi((current) => ({ ...current, [key]: Math.round(width) }));
   };
-  const allBots = settings.values.bots.map((bot) => drafts[bot.id] ?? bot);
+  const allBots = settings.values.bots.filter((bot) => !focusedBotId || bot.id === focusedBotId).map((bot) => drafts[bot.id] ?? bot);
   const library = settings.values.library ?? EMPTY_LIBRARY;
-  const groups = settings.values.groups ?? [];
+  const groups = focusedBotId ? [] : settings.values.groups ?? [];
   const listed = allBots
-    .filter((bot) => listUi.showArchived || !bot.archived)
+    .filter((bot) => focusedBotId || listUi.showArchived || !bot.archived)
     .sort((a, b) => Number(b.pinned) - Number(a.pinned));
   const selectedBot = selection ? allBots.find((bot) => bot.id === selection.botId) : undefined;
   const archivedCount = allBots.filter((bot) => bot.archived).length;
   const tabs = teamTabs(groups, listed);
-  const openTab = tabs.find((tab) => tab.id === listUi.tab) ?? tabs[0] ?? null;
+  const openTab = focusedBotId ? null : tabs.find((tab) => tab.id === listUi.tab) ?? tabs[0] ?? null;
 
   // ------------------------------------------------------------ actions
 
@@ -364,6 +374,36 @@ function BotsSurfaceContent({ theme, layout, host, navigation }: PluginSurfacePr
       .then(() => toast.show(done, { variant: "success" }))
       .catch(() => toast.error("Unable to copy"));
 
+  const deleteBot = async (bot: Bot) => {
+    const confirmed = await confirmDialog({
+      title: "Delete bot?",
+      message: `Delete "${bot.name}"?\n\nIts chats stay on the host and remain in Paseo's history.`,
+      confirmLabel: "Delete",
+      cancelLabel: "Cancel",
+      destructive: true,
+    });
+    if (confirmed) await remove(bot);
+  };
+
+  consumeIntent.current = () => {
+    const intent = peekIntent();
+    if (!intent) return;
+    if (intent.kind === "new-bot") {
+      if (!focusedBotId) { takeIntent(); setCreating(true); }
+      return;
+    }
+    if (intent.hostId !== host.id || intent.botId !== focusedBotId) return;
+    takeIntent();
+    const bot = allBots.find((entry) => entry.id === intent.botId);
+    if (!bot) return;
+    switch (intent.action) {
+      case "settings": openPanel(bot, "identity"); break;
+      case "rename": setRenaming(bot); break;
+      case "export": setExporting(bot); break;
+      case "delete": void deleteBot(bot).catch((error: unknown) => toast.error(errorText(error))); break;
+    }
+  };
+
   const openBotMenu = (bot: Bot, anchor: LayoutRectangle, source: MenuSource) => {
     const botHost = resolveHost(bot.hostId);
     const chats = queryClient.getQueryData<PaseoAgent[]>(["paseo-bots", "chats", botHost.key, bot.id]) ?? [];
@@ -390,16 +430,7 @@ function BotsSurfaceContent({ theme, layout, host, navigation }: PluginSurfacePr
             .then(() => commit((values) => ({ ...values, presets: [...(values.presets ?? []), presetFromBot(values.bots.find((entry) => entry.id === bot.id) ?? bot)] })))
             .then((saved) => saved && toast.show(`Saved ${bot.name} as a preset. It's under New bot.`, { variant: "success" })),
         onToggleArchive: () => void updateBot(bot.id, { archived: !bot.archived }),
-        onDelete: async () => {
-          const confirmed = await confirmDialog({
-            title: "Delete bot?",
-            message: `Delete "${bot.name}"?\n\nIts chats stay on the host and remain in Paseo's history.`,
-            confirmLabel: "Delete",
-            cancelLabel: "Cancel",
-            destructive: true,
-          });
-          if (confirmed) await remove(bot);
-        },
+        onDelete: () => deleteBot(bot),
       }),
     });
   };
@@ -510,15 +541,16 @@ function BotsSurfaceContent({ theme, layout, host, navigation }: PluginSurfacePr
     <BotSidebar
       colors={colors}
       bots={listed}
+      focused={Boolean(focusedBotId)}
       openTab={openTab}
       hiddenArchivedCount={listUi.showArchived ? 0 : archivedCount}
       selection={selection}
-      ui={listUi}
+      ui={focusedBotId ? { ...listUi, collapsed: focusedCollapsed ? [focusedBotId] : [] } : listUi}
       localHost={localHost}
       touch={layout.compact || layout.platform !== "web"}
       splash={layout.compact}
       bottomInset={bottomInset}
-      onToggle={(botId) =>
+      onToggle={(botId) => focusedBotId ? setFocusedCollapsed((value) => !value) :
         updateUi((current) => ({
           ...current,
           collapsed: current.collapsed.includes(botId) ? current.collapsed.filter((id) => id !== botId) : [...current.collapsed, botId],
@@ -763,6 +795,7 @@ function SelectedChat({ colors, bot, library, selection, localHost, panelOpen, l
     const plugin = host.isLocal ? await mountServers({ botId: bot.id, agentId }) : {};
     const id = await startBotChat(host.api, {
       bot,
+      config: message.config,
       library,
       ...(host.isLocal ? { agentId } : {}),
       plugin,

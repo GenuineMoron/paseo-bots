@@ -109,3 +109,17 @@ export function moveKey(keys: readonly string[], key: string, delta: -1 | 1): st
   next[target] = key;
   return next;
 }
+
+/** Manual sidebar placement wins over the default pin grouping without changing pins. */
+export function orderSidebarBots<T extends { id: string; pinned: boolean }>(bots: readonly T[], storedOrder: readonly string[] = []): T[] {
+  return applyStoredOrdering([...bots].sort((a, b) => Number(b.pinned) - Number(a.pinned)), storedOrder, (bot) => bot.id);
+}
+
+/** Matches sortable array-move placement; stale or external IDs cannot alter the list. */
+export function moveKeyTo(keys: readonly string[], source: string, target: string): string[] {
+  if (source === target || !keys.includes(source) || !keys.includes(target)) return [...keys];
+  const index = keys.indexOf(target);
+  const next = keys.filter((key) => key !== source);
+  next.splice(index, 0, source);
+  return next;
+}

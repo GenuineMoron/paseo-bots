@@ -16,7 +16,7 @@ import {
   type NativeSyntheticEvent,
 } from "react-native";
 import type { ComposerAttachment } from "../../shared/attachments";
-import type { BotVoice } from "../../shared/bot";
+import type { BotAvatar, BotVoice } from "../../shared/bot";
 import { CONTENT_MAX_WIDTH, nativeTokens } from "../native";
 import { sentAttachments } from "../sent-attachments";
 import { canSpeak, speak, stopSpeaking } from "../speech";
@@ -42,6 +42,8 @@ const HISTORY_START_THRESHOLD = 96;
 const EMPTY_ATTACHMENTS: ComposerAttachment[] = [];
 
 export interface ChatStreamProps {
+  botAvatar?: BotAvatar;
+  botName?: string;
   colors: Colors;
   chat: ChatState;
   api: PaseoApi | null;
@@ -65,7 +67,7 @@ function isTurnRunning(chat: ChatState): boolean {
   return chat.agent?.status === "running" || chat.agent?.status === "initializing";
 }
 
-export function ChatStream({ colors, chat, api, agentId, compact, platform, typeVersion, onOpenChat, botId, voice, findOpen = false, onCloseFind }: ChatStreamProps) {
+export function ChatStream({ colors, chat, api, agentId, compact, platform, typeVersion, onOpenChat, botId, botAvatar, botName, voice, findOpen = false, onCloseFind }: ChatStreamProps) {
   const running = isTurnRunning(chat);
   const inverted = platform !== "web";
   const list = useRef<NativeFlatList<StreamLayoutItem>>(null);
@@ -230,10 +232,12 @@ export function ChatStream({ colors, chat, api, agentId, compact, platform, type
       openChat: onOpenChat,
       agentId,
       botId: botId ?? null,
+      botAvatar,
+      botName,
       voice: canSpeak && voice ? voice.name : undefined,
       highlightKey: findOpen ? found : null,
     }),
-    [colors, compact, cwd, onOpenChat, agentId, botId, voice, findOpen, found],
+    [colors, compact, cwd, onOpenChat, agentId, botId, botAvatar, botName, voice, findOpen, found],
   );
 
   // A bot that reads its replies aloud reads each one as it finishes, while its chat is open.

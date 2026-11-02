@@ -17,6 +17,8 @@ import { Relay } from "./server/relay";
 import { acceptProposal, dismissProposal, getProposal } from "./server/proposals";
 import { BOT_TOOLS } from "./server/tools";
 import { saveUpload } from "./server/uploads";
+import { configureBotChat } from "./server/chat-config";
+import { chatConfigRpc } from "./shared/chat-config";
 import { botSettings, EMPTY_LIBRARY } from "./shared/bot";
 import { shellCommand } from "./shared/commands";
 import {
@@ -78,6 +80,11 @@ export default function contribute(server: PluginServerContext) {
     .then(migrateBotSkills)
     .catch((error: unknown) => console.error("paseo-bots: couldn't prepare the Bots folder", error));
   const settings = server.registerSettings(botSettings);
+  server.handle(chatConfigRpc, async (input, { paseo }) => {
+    const state = await settings.read();
+    if (state.status !== "ready" || !state.values.bots.some((bot) => bot.id === input.botId)) throw new Error("Bot unavailable.");
+    return configureBotChat(paseo, input);
+  });
   const library = async () => {
     const state = await settings.read();
     return state.status === "ready" ? (state.values.library ?? EMPTY_LIBRARY) : EMPTY_LIBRARY;

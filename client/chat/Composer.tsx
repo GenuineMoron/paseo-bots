@@ -49,6 +49,7 @@ import {
 } from "./composer/logic";
 import { useSendBehavior } from "./composer/storage";
 import { tooltip } from "../ui/Tooltip";
+import { useComposerConfig } from "./composer/AgentControls";
 
 type Colors = PluginTheme["colors"];
 type Permission = PaseoAgent["pendingPermissions"][number];
@@ -89,6 +90,7 @@ const commandCache = new Map<string, Promise<{ commands: SlashCommand[]; error: 
 // meter and send/stop button on the right.
 function ChatComposer({ colors, bot, host, agentId, running, layout, keyboardOpen, agent, onStart, draftKey }: ComposerProps & { draftKey: string }) {
   const toast = useToast();
+  const config = useComposerConfig({ colors, bot, host, agentId, agent, running });
   const menu = useMenu();
   const upload = useRpc(uploadRpc);
   const tokens = nativeTokens(colors);
@@ -122,7 +124,7 @@ function ChatComposer({ colors, bot, host, agentId, running, layout, keyboardOpe
   const desktopWeb = layout.platform === "web" && !layout.compact;
   const buttonIconSize = web ? 16 : 20;
   const hasContent = text.trim().length > 0 || attachments.length > 0;
-  const loading = processing || pending.length > 0;
+  const loading = processing || pending.length > 0 || config.busy;
   const canInterrupt = running && permissions.length > 0 && agentId !== null && !!host.api;
   const canPressLoading = loading && canInterrupt;
   const sendDisabled = !host.api || (!canPressLoading && loading);
@@ -275,7 +277,7 @@ function ChatComposer({ colors, bot, host, agentId, running, layout, keyboardOpe
       } as PaseoAgentSendOptions;
       await host.api.agents.ref(agentId).send(outgoing, options);
     } else {
-      await onStart({ text: outgoing, messageId, ...wire });
+      await onStart({ text: outgoing, messageId, ...wire, config: config.startConfig });
     }
   };
 
@@ -335,7 +337,7 @@ function ChatComposer({ colors, bot, host, agentId, running, layout, keyboardOpe
   }, [drain]);
   const draining = useRef(false);
   useEffect(() => {
-    const inFlight = draining.current || drain !== "idle" || processing;
+    const inFlight = draining.current || drain !== "idle" || processing || config.busy;
     if (!shouldDrainQueue({ running, queued: queue.length, inFlight, hasAgent: agentId !== null && !!host.api })) return;
     const next = takeQueuedMessage(draftKey, queue[0]!.id);
     if (!next) return;
@@ -352,9 +354,10 @@ function ChatComposer({ colors, bot, host, agentId, running, layout, keyboardOpe
       .finally(() => {
         draining.current = false;
       });
-  }, [running, queue, drain, processing, agentId, host.api]);
+  }, [running, queue, drain, processing, config.busy, agentId, host.api]);
 
   const sendQueuedNow = async (item: QueuedMessage) => {
+    if (config.busy) return;
     if (!host.api || !takeQueuedMessage(draftKey, item.id)) return;
     setSendError(null);
     try {
@@ -532,8 +535,9 @@ function ChatComposer({ colors, bot, host, agentId, running, layout, keyboardOpe
               ]}
             />
             <View style={{ flexShrink: 0, flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", marginHorizontal: -6 }}>
-              <View style={{ minWidth: 0, flexShrink: 1, flexGrow: 1, flexDirection: "row", alignItems: "flex-end" }}>
+              <View style={{ minWidth: 0, flexShrink: 1, flexGrow: 1, flexDirection: "row", flexWrap: "wrap", alignItems: "center" }}>
                 <AttachButton colors={colors} anchorRef={attachRef} iconSize={buttonIconSize} disabled={!host.api} onPress={() => void openAttachMenu()} />
+                {config.controls}
               </View>
               <View style={{ flexShrink: 0, flexDirection: "row", alignItems: "center", gap: 4 }}>
                 {agentId ? (
