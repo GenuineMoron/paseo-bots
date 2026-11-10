@@ -60,7 +60,7 @@ export function BotShortcuts(props: PluginSidebarItemProps) {
           <Icon name="LayoutGrid" size={13} color={colors.foregroundMuted} />
         </Pressable>
       </View>
-      {!collapsed ? <BotSortableList key={props.host.id} bots={bots} hostId={props.host.id} onReorder={reorder} renderBot={(bot, drag) => (
+      {!collapsed ? <BotSortableList key={props.host.id} bots={bots} onReorder={reorder} renderBot={(bot, drag) => (
         <SidebarBot
           key={bot.id}
           {...props}
@@ -94,7 +94,6 @@ function SidebarBot({ bot, active, openScreen, openPopover, theme, layout, host,
   return (
     <>
     <Pressable
-      ref={drag.ref}
       {...drag.props}
       accessibilityRole="button"
       accessibilityLabel={bot.name}

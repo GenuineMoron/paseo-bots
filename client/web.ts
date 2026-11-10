@@ -1,7 +1,7 @@
 import { Platform } from "react-native";
 
-// Web-only DOM helpers: picking a picture for an avatar, scaling it, and the DOM node behind
-// a view (for drag and drop). Pickers are no-ops off the web.
+// Web-only DOM helpers: picking a picture for an avatar and scaling it. Pickers are no-ops
+// off the web.
 // This plugin typechecks without the DOM library. Declare only what this module uses.
 
 interface DomFile {
@@ -19,10 +19,6 @@ interface DomInput {
   addEventListener(type: "cancel", listener: () => void): void;
   click(): void;
   remove(): void;
-}
-/** A DOM element as far as this module is concerned. */
-interface DomElement {
-  addEventListener(type: string, listener: (event: unknown) => void): void;
 }
 interface DomImage {
   src: string;
@@ -109,13 +105,4 @@ export async function squareImage(source: string, size: number): Promise<string>
   context.imageSmoothingQuality = "high";
   context.drawImage(image, (image.naturalWidth - side) / 2, (image.naturalHeight - side) / 2, side, side, 0, 0, size, size);
   return canvas.toDataURL("image/webp", 0.85);
-}
-
-/** The DOM node behind a React Native ref on web (react-native-web refs are the host elements). */
-export function domNode(ref: unknown): DomElement | null {
-  if (!web || !ref || typeof ref !== "object") return null;
-  const candidate = ref as Partial<DomElement> & { getNativeRef?: () => unknown };
-  if (typeof candidate.addEventListener === "function") return candidate as DomElement;
-  const inner = candidate.getNativeRef?.();
-  return inner && typeof (inner as DomElement).addEventListener === "function" ? (inner as DomElement) : null;
 }
