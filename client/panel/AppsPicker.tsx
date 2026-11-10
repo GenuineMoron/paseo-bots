@@ -6,7 +6,7 @@ import type { AppRule } from "../../shared/bot";
 import { useBotHost } from "../data";
 import { connectedApps, useAppsAccounts, useAppsCatalog, useAppsStatus } from "../library/apps";
 import { AppLogo } from "../library/parts";
-import { openLibrary } from "../navigation";
+import { useOpenLibrary } from "../navigation";
 import { AppAccessSheet } from "./AppAccessSheet";
 import type { PanelProps } from "./BotPanel";
 import { CardNote, PressableRow, RowText, SectionLink, Switch } from "./controls";
@@ -34,6 +34,7 @@ export function AppsPicker({ colors, bot, localHost, onPatch }: Pick<PanelProps,
   const catalog = useAppsCatalog(configured);
   const apps = connectedApps(accounts.data?.accounts ?? [], catalog.data?.apps ?? []);
   const [editing, setEditing] = useState<string | null>(null);
+  const openLibrary = useOpenLibrary();
   const editingApp = apps.find((app) => app.slug === editing);
   const appAccounts = (slug: string) => (accounts.data?.accounts ?? []).filter((account) => account.slug === slug && account.status === "connected");
   const toggle = (slug: string, on: boolean) => onPatch({ apps: on ? [...new Set([...bot.apps, slug])] : bot.apps.filter((entry) => entry !== slug) });

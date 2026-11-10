@@ -1,9 +1,10 @@
 import type { PluginTheme } from "@getpaseo/plugin";
-import { Icon, Modal } from "@getpaseo/plugin/client/react-native";
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Icon, Modal, useToast } from "@getpaseo/plugin/client/react-native";
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { ActivityIndicator, Platform, Pressable, Text, View, type LayoutRectangle } from "react-native";
 import { nativeTokens, useHover } from "../native";
 import { ui } from "../typography";
+import { useEscapeToClose } from "./escape";
 
 // Paseo's DropdownMenu (components/ui/menu): an anchored popover on desktop and a
 // bottom sheet on compact. Plugins get no menu component inside a surface, so this
@@ -76,12 +77,6 @@ export function contextMenuProps(onOpen: (anchor: LayoutRectangle) => void): obj
   };
 }
 
-// This plugin typechecks without the DOM library. Declare only what this module uses.
-const dom = globalThis as unknown as {
-  addEventListener?: (type: "keydown", listener: (event: { key: string; stopPropagation(): void }) => void, capture?: boolean) => void;
-  removeEventListener?: (type: "keydown", listener: (event: { key: string; stopPropagation(): void }) => void, capture?: boolean) => void;
-};
-
 export function MenuProvider({ colors, compact, children }: { colors: Colors; compact: boolean; children: ReactNode }) {
   const [spec, setSpec] = useState<MenuSpec | null>(null);
   const [origin, setOrigin] = useState<LayoutRectangle>({ x: 0, y: 0, width: 0, height: 0 });
@@ -95,17 +90,7 @@ export function MenuProvider({ colors, compact, children }: { colors: Colors; co
   }, []);
   const api = useMemo(() => ({ open, close }), [open, close]);
 
-  useEffect(() => {
-    if (!spec || Platform.OS !== "web" || !dom.addEventListener) return;
-    // Capture phase: Paseo's own shortcut handling would otherwise swallow Escape first.
-    const onKey = (event: { key: string; stopPropagation(): void }) => {
-      if (event.key !== "Escape") return;
-      event.stopPropagation();
-      close();
-    };
-    dom.addEventListener("keydown", onKey, true);
-    return () => dom.removeEventListener?.("keydown", onKey, true);
-  }, [spec, close]);
+  useEscapeToClose(spec !== null, close);
 
   return (
     <MenuContext.Provider value={api}>
@@ -181,15 +166,18 @@ export function Entries({ colors, entries, compact, onClose }: { colors: Colors;
 function MenuRow({ colors, entry, compact, onClose }: { colors: Colors; entry: Exclude<MenuEntry, { kind: "separator" }>; compact: boolean; onClose(): void }) {
   const { hovered, hoverProps } = useHover();
   const [pending, setPending] = useState(false);
+  const toast = useToast();
   const tint = entry.destructive ? colors.statusDanger : colors.foreground;
   const select = () => {
     const result = entry.onSelect();
     if (entry.pendingLabel && result && typeof (result as Promise<void>).then === "function") {
       setPending(true);
-      void (result as Promise<void>).finally(() => {
-        setPending(false);
-        onClose();
-      });
+      void (result as Promise<void>)
+        .catch((error: unknown) => toast.error(error instanceof Error ? error.message : String(error)))
+        .finally(() => {
+          setPending(false);
+          onClose();
+        });
     } else onClose();
   };
   return (

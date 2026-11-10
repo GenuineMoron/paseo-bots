@@ -6,6 +6,8 @@
 
 Personal bots for [Paseo](https://paseo.sh), like Grok Bot or Hermes Bots. Give each bot instructions, a model, memory, skills and tools, then chat with it in its own workspace or let it run routines.
 
+> **About this fork.** This is a fork of [oliexe/paseo-bots](https://github.com/oliexe/paseo-bots). Bot chats open in Paseo's own chat view, so pictures, files, voice, the model picker, history and phones work exactly as in any other Paseo chat. Bots sit at the top of Paseo's sidebar with a dot while they're working or need you, any chat started in a bot's workspace is that bot's chat, and the plugin's own tools can be switched off per bot for agents that bring their own, such as Hermes. [FORK-NOTES.md](FORK-NOTES.md) explains how it works and what changed.
+
 ## Core Features
 
 | Feature | Description |
@@ -32,19 +34,23 @@ Personal bots for [Paseo](https://paseo.sh), like Grok Bot or Hermes Bots. Give 
 
 ## Install
 
+This fork:
+
 ```bash
-paseo plugin install npm:@oliexe/paseo-bots
+paseo plugin install git:GenuineMoron/paseo-bots
 ```
 
-Or paste `npm:@oliexe/paseo-bots` into **Settings → Plugins → Plugin source** in Paseo. Requires Paseo 0.9.2 or later.
+Or paste `git:GenuineMoron/paseo-bots` into **Settings → Plugins → Plugin source** in Paseo. Requires Paseo 0.14 or later. The plugin id is the same as the original's, so your bots and settings carry over.
+
+The original: `paseo plugin install npm:@oliexe/paseo-bots`.
 
 ## Usage
 
 ### Bots
 
-1. Open **Bots** in Paseo's sidebar and press **New bot**. Start blank, from a role, from one of your presets, or paste a bot or team file under **Import**.
-2. Chat with it. Every chat is a thread in the bot's workspace; **Open in Paseo** in a chat's menu shows it in Paseo's own view.
-3. Open its settings with the panel button at the top right of a chat, or **Open bot settings** in the bot's menu. **Identity** holds the name, avatar and voice, **Soul** its standing instructions, **Model** the provider and model, and **Permissions** the approval mode.
+1. Press the grid button on the **Bots** heading in Paseo's sidebar, then **New bot**. Start blank, from a role, from one of your presets, or paste a bot or team file under **Import**.
+2. Chat with it: choose the bot in the sidebar, then **New chat** or one of its chats. Chats open in Paseo's own chat view, in the bot's workspace. Paseo's **+** tab there starts a chat with the bot too, and the bot's avatar at the top right of the chat goes back to its chats and settings.
+3. Its settings sit beside its chats, or open **Open bot settings** in the bot's menu. **Identity** holds the name and avatar, **Soul** its standing instructions, **Model** the provider and model, **Access** its tools, and **Permissions** the approval mode.
 
 Bots can do the setting up too. Ask one in a chat, for example "Create a research team of three bots with Scout as Chief of Staff", and it shows every change on one card; **Apply changes** makes them. A bot can create, edit and delete bots, teams, routines, library skills and MCP servers, and change what new bots start with. Each bot's earlier settings stay under **History** in its settings.
 

@@ -97,7 +97,7 @@ export class MemoryJournal {
     if (text === null) await rm(path, { force: true });
     else {
       await mkdir(join(path, ".."), { recursive: true });
-      await writeFile(path, text, "utf8");
+      await writeFile(path, text, { encoding: "utf8", mode: 0o600 });
     }
     await this.append(botId, file, before, text, { actor: "you", via, chat: null });
     const seen = this.seen.get(botId);

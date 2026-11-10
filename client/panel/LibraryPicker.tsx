@@ -2,7 +2,7 @@ import { Icon } from "@getpaseo/plugin/client/react-native";
 import { SettingsCard, SettingsSection } from "@getpaseo/plugin/client/ui";
 import type { Bot } from "../../shared/bot";
 import { mcpServerTested, mcpTarget, setBotUses, type LibraryKind } from "../../shared/library";
-import { openLibrary } from "../navigation";
+import { useOpenLibrary } from "../navigation";
 import type { PanelProps } from "./BotPanel";
 import { CardNote, PressableRow, RowText, SectionLink, Switch } from "./controls";
 
@@ -40,6 +40,7 @@ export function LibraryPicker({ colors, bot, library, onPatch, kind, title, info
     onPatch(kind === "skill" ? { skillIds: next.skillIds } : { mcpServerIds: next.mcpServerIds });
   };
   const noun = kind === "skill" ? "skills" : "MCP servers";
+  const openLibrary = useOpenLibrary();
 
   return (
     <SettingsSection title={title} info={info} trailing={<SectionLink colors={colors} icon="ArrowUpRight" label="Skills & Tools" onPress={() => openLibrary()} />}>

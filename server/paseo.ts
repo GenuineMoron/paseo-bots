@@ -4,3 +4,4 @@ import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 // dependencies, so the type comes from the SDK rather than @getpaseo/client.
 
 export type PaseoApi = PluginHandlerContext["paseo"];
+export type PaseoAgent = Awaited<ReturnType<PaseoApi["agents"]["list"]>>["entries"][number]["agent"];

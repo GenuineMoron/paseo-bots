@@ -6,7 +6,8 @@ import { ProposalSchema } from "./proposals";
 const BotId = z.string().regex(/^[a-z0-9-]+$/);
 /** "MEMORY.md" or a topic file such as "projects.md" (stored under memory/). */
 const MemoryFileName = z.string().regex(/^[A-Za-z0-9 ._-]+\.md$/);
-const SkillName = z.string().regex(/^[A-Za-z0-9._-]+$/);
+// No leading dot: "." and ".." would name folders outside the skill library.
+export const SkillName = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
 
 /**
  * Creates (if needed) the Bots project folder and this bot's folder inside it.
@@ -16,6 +17,29 @@ export const ensureBotHomeRpc = defineRpc({
   name: "bots.ensure-home",
   input: z.object({ botId: BotId }),
   output: z.object({ root: z.string(), path: z.string() }),
+});
+
+// ---------------------------------------------------------------- chats
+
+/** Starts a chat with a bot, ready to open in Paseo's chat view. Without a prompt, the bot's untouched new chat is reused. */
+export const chatNewRpc = defineRpc({
+  name: "bots.chat.new",
+  input: z.object({ botId: BotId, prompt: z.string().max(100_000).optional() }),
+  output: z.object({ agentId: z.string() }),
+});
+
+/** This host's bot workspaces and their bots, for the chat lists and the bots' header buttons. */
+export const botWorkspacesRpc = defineRpc({
+  name: "bots.workspaces",
+  input: z.object({}),
+  output: z.object({ workspaces: z.array(z.object({ workspaceId: z.string(), botId: z.string(), name: z.string(), avatar: BotSchema.shape.avatar })) }),
+});
+
+/** The bot a chat belongs to (by its label, or by the folder it runs in), or null. */
+export const chatBotRpc = defineRpc({
+  name: "bots.chat.bot",
+  input: z.object({ agentId: z.string().min(1).max(200) }),
+  output: z.object({ botId: z.string().nullable() }),
 });
 
 /** Sent by the app on start so the daemon side can run routines. */
@@ -253,12 +277,6 @@ export const importTeamRpc = defineRpc({
 });
 
 /** Stores a picked file on this host so it can be sent as an `uploaded_file` attachment. */
-export const uploadRpc = defineRpc({
-  name: "bots.upload",
-  input: z.object({ botId: BotId, fileName: z.string().min(1).max(255), dataBase64: z.string().max(36_000_000) }),
-  output: z.object({ path: z.string(), size: z.number() }),
-});
-
 // ---------------------------------------------------------------- connected apps
 
 const AppCardSchema = z.object({ slug: z.string(), name: z.string(), description: z.string(), logo: z.string().nullable(), domain: z.string().nullable(), noAuth: z.boolean() });
@@ -334,12 +352,6 @@ export const appsDisconnectRpc = defineRpc({
  * connected apps when the bot uses them. `agentId` is the chat's id, picked
  * before the chat is created.
  */
-export const mountRpc = defineRpc({
-  name: "bots.mount",
-  input: z.object({ botId: BotId, agentId: z.uuid() }),
-  output: z.object({ tools: McpServerConfigSchema, apps: McpServerConfigSchema.nullable() }),
-});
-
 // ---------------------------------------------------------------- proposals
 
 const ProposalId = z.string().regex(/^p-[a-z0-9]+$/);

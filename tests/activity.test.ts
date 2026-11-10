@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { BotChats } from "../server/bot-chats";
 import { journalSummary, lastTurn, logLine, matchesAll, parseLog, parseSince, recentWork, redactSecrets, searchWords, snippet } from "../shared/activity";
 import { lineDiff } from "../shared/diff";
 import { newUuid } from "../shared/uuid";
@@ -145,11 +146,14 @@ describe("memory journal, daily log and search_chats", () => {
     const journal = new MemoryJournal();
     const agent = { id: newUuid(), workspaceId: null, parentAgentId: null, provider: "claude", cwd: "/", title: null };
 
-    const timeline = [
+    // Paseo's turn_ended event carries no timeline; the turn is read back from the chat.
+    const timeline = [] as never;
+    const turn = [
       { type: "user_message", text: "Send the Q3 invoices" },
       { type: "tool_call", name: "mcp__apps__GMAIL_SEND", callId: "1", status: "completed", detail: { type: "unknown", input: null, output: null }, error: null },
       { type: "assistant_message", text: "Sent the three Q3 invoices to Acme." },
-    ] as never;
+    ];
+    host.attach({ agents: { ref: () => ({ timeline: { refetch: async () => ({ entries: turn.map((item) => ({ item })) }) } }) } } as never);
     await turnEnded(host, journal, scheduler, { agent, turnId: "t1", outcome: { kind: "completed" }, timeline });
     await turnEnded(host, journal, scheduler, { agent: { ...agent, id: "other-agent" }, turnId: "t2", outcome: { kind: "completed" }, timeline });
     await turnEnded(host, journal, scheduler, { agent, turnId: "t3", outcome: { kind: "canceled", reason: "stopped" }, timeline });
@@ -164,7 +168,9 @@ describe("memory journal, daily log and search_chats", () => {
       { item: { type: "assistant_message", text: "Sent the three Q3 invoices to Acme." }, timestamp: new Date().toISOString() },
     ];
     const listed: unknown[] = [];
+    host.useChats(new BotChats(host, null as never));
     host.attach({
+      workspaces: { list: async () => ({ entries: [] }) },
       agents: {
         list: async (options: unknown) => {
           listed.push(options);

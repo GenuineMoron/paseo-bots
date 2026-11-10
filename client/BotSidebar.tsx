@@ -9,7 +9,7 @@ import type { TeamTab } from "../shared/groups";
 import { aggregateBuckets, BUCKET_LABELS, chatBucket, orderChats, SIDEBAR_GROUP_LIMIT, type ChatBucket } from "../shared/sidebar";
 import { Avatar } from "./Avatar";
 import { useBotChats, useBotHost, type LocalHost } from "./data";
-import { openLibrary } from "./navigation";
+import { useOpenLibrary } from "./navigation";
 import { nativeTokens, useHover, type NativeTokens } from "./native";
 import { Splash } from "./Splash";
 import { ui } from "./typography";
@@ -20,14 +20,6 @@ import { tooltip } from "./ui/Tooltip";
 // and components/sidebar/*: bot rows are project rows, chat rows are workspace rows.
 
 type Colors = PluginTheme["colors"];
-
-export interface Selection {
-  botId: string;
-  /** Null is a new, not yet started chat. */
-  chatId: string | null;
-  /** First message to send straight away when starting a new chat. */
-  prompt?: string;
-}
 
 export type MenuSource = "kebab" | "context";
 
@@ -46,7 +38,6 @@ interface BotSidebarProps {
   openTab: TeamTab | null;
   /** Archived bots hidden by the display preferences. Keeps the header (and its menu) up when they're all that's left. */
   hiddenArchivedCount: number;
-  selection: Selection | null;
   ui: BotListUi;
   localHost: LocalHost;
   /** Touch devices have no hover: row actions stay visible. */
@@ -58,7 +49,9 @@ interface BotSidebarProps {
   onToggle(botId: string): void;
   onTogglePinnedSection(): void;
   onShowArchived(): void;
-  onSelect(selection: Selection): void;
+  /** Opens a chat in Paseo's chat view. */
+  onOpenChat(bot: Bot, chatId: string): void;
+  onNewChat(bot: Bot): void;
   onNewBot(): void;
   onBotMenu(bot: Bot, anchor: LayoutRectangle, source: MenuSource): void;
   onChatMenu(bot: Bot, chat: PaseoAgent, anchor: LayoutRectangle, source: MenuSource, context: ChatMenuContext): void;
@@ -145,6 +138,7 @@ function SectionHeader({ colors, title, onDisplayMenu }: { colors: Colors; title
 
 function Footer({ colors, onNewBot, onTeamMap }: { colors: Colors; onNewBot(): void; onTeamMap(): void }) {
   const { hovered, hoverProps } = useHover();
+  const openLibrary = useOpenLibrary();
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 8, paddingVertical: 12, borderTopWidth: 1, borderTopColor: colors.border }}>
       <Pressable
@@ -274,7 +268,7 @@ function PinnedSection(props: PinnedProps) {
   );
 }
 
-function PinnedChatRow({ colors, tokens, bot, chatId, selection, localHost, touch, onSelect, onChatMenu }: PinnedProps & { bot: Bot; chatId: string }) {
+function PinnedChatRow({ colors, tokens, bot, chatId, localHost, touch, onOpenChat, onChatMenu }: PinnedProps & { bot: Bot; chatId: string }) {
   const host = useBotHost(bot.hostId, localHost);
   const chats = useBotChats(host, bot.id);
   const chat = chats.data?.find((entry) => entry.id === chatId);
@@ -287,8 +281,7 @@ function PinnedChatRow({ colors, tokens, bot, chatId, selection, localHost, touc
       bot={bot}
       hoisted
       touch={touch}
-      selected={selection?.botId === bot.id && selection.chatId === chat.id}
-      onPress={() => onSelect({ botId: bot.id, chatId: chat.id })}
+      onPress={() => onOpenChat(bot, chat.id)}
       onMenu={(anchor, source) => onChatMenu(bot, chat, anchor, source, { siblings: [], pinned: true })}
     />
   );
@@ -299,13 +292,11 @@ function PinnedChatRow({ colors, tokens, bot, chatId, selection, localHost, touc
 type GroupProps = BotSidebarProps & { bot: Bot; tokens: NativeTokens; pinnedIds: ReadonlySet<string>; /** The team's Chief of Staff. */ lead?: boolean };
 
 function BotGroup(props: GroupProps) {
-  const { colors, tokens, bot, selection, ui: listUi, localHost, touch, pinnedIds, onSelect, onChatMenu } = props;
+  const { colors, tokens, bot, ui: listUi, localHost, touch, pinnedIds, onOpenChat, onNewChat, onChatMenu } = props;
   const host = useBotHost(bot.hostId, localHost);
   const chats = useBotChats(host, bot.id);
   const [expanded, setExpanded] = useState(false);
   const isOpen = !listUi.collapsed.includes(bot.id);
-  const botSelected = selection?.botId === bot.id;
-  const draftSelected = botSelected && selection?.chatId === null;
 
   const unpinned = (chats.data ?? []).filter((chat) => !pinnedIds.has(chat.id));
   const ordered = orderChats(unpinned, listUi.chatSort, listUi.chatOrder[bot.id]);
@@ -318,10 +309,10 @@ function BotGroup(props: GroupProps) {
   let children: ReactNode = null;
   if (isOpen) {
     if (loading) children = <SkeletonRows colors={colors} />;
-    else if (ordered.length > 0 || draftSelected) {
+    else if (ordered.length > 0) {
       children = (
         <>
-          {(draftSelected || props.focused) && ordered.length > 0 ? <NewChatGhostRow colors={colors} tokens={tokens} selected={draftSelected} onPress={() => onSelect({ botId: bot.id, chatId: null })} /> : null}
+          {props.focused ? <NewChatGhostRow colors={colors} onPress={() => onNewChat(bot)} /> : null}
           {visible.map((chat) => (
             <ChatRow
               key={chat.id}
@@ -330,17 +321,15 @@ function BotGroup(props: GroupProps) {
               chat={chat}
               bot={bot}
               touch={touch}
-              selected={botSelected && selection?.chatId === chat.id}
-              onPress={() => onSelect({ botId: bot.id, chatId: chat.id })}
+              onPress={() => onOpenChat(bot, chat.id)}
               onMenu={(anchor, source) => onChatMenu(bot, chat, anchor, source, { siblings, pinned: false })}
             />
           ))}
           {ordered.length > SIDEBAR_GROUP_LIMIT ? <ShowMoreRow colors={colors} expanded={expanded} onPress={() => setExpanded(!expanded)} /> : null}
-          {ordered.length === 0 ? <NewChatGhostRow colors={colors} tokens={tokens} selected onPress={() => onSelect({ botId: bot.id, chatId: null })} /> : null}
         </>
       );
     } else if (host.api) {
-      children = <NewChatGhostRow colors={colors} tokens={tokens} selected={false} onPress={() => onSelect({ botId: bot.id, chatId: null })} />;
+      children = <NewChatGhostRow colors={colors} onPress={() => onNewChat(bot)} />;
     }
   }
 
@@ -352,11 +341,13 @@ function BotGroup(props: GroupProps) {
   );
 }
 
-function BotRow({ colors, tokens, bot, lead, touch, isOpen, aggregate, hostLabel, onToggle, onSelect, onBotMenu }: GroupProps & { isOpen: boolean; aggregate: ChatBucket | null; hostLabel: string | null }) {
+function BotRow({ colors, tokens, bot, lead, touch, isOpen, aggregate, hostLabel, onToggle, onNewChat, onBotMenu }: GroupProps & { isOpen: boolean; aggregate: ChatBucket | null; hostLabel: string | null }) {
   const [hovered, setHovered] = useState(false);
   const kebabRef = useRef<View>(null);
   const plus = useHover();
-  const actionsVisible = hovered || touch;
+  // Keyboard focus anywhere in the row shows its buttons too, so they can be reached without a pointer.
+  const [focused, setFocused] = useState(false);
+  const actionsVisible = hovered || focused || touch;
   const backdrop = hovered ? colors.surface1 : tokens.surfaceSidebar;
   // The row's press target sits behind its content and the + / ⋮ buttons are its siblings,
   // not children: nested pressables let a button press leak into the row on react-native-web.
@@ -364,6 +355,8 @@ function BotRow({ colors, tokens, bot, lead, touch, isOpen, aggregate, hostLabel
     <View
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
       style={[
         {
           position: "relative",
@@ -413,7 +406,7 @@ function BotRow({ colors, tokens, bot, lead, touch, isOpen, aggregate, hostLabel
             accessibilityLabel={`New chat with ${bot.name}`}
             {...tooltip("New chat", "bottom")}
             hitSlop={8}
-            onPress={() => onSelect({ botId: bot.id, chatId: null })}
+            onPress={() => onNewChat(bot)}
             {...plus.hoverProps}
             style={({ pressed: down }) => ({
               width: 24,
@@ -448,7 +441,6 @@ interface ChatRowProps {
   tokens: NativeTokens;
   chat: PaseoAgent;
   bot: Bot;
-  selected: boolean;
   touch: boolean;
   /** Pinned rows sit outside their bot, so they lead with its avatar and name it underneath. */
   hoisted?: boolean;
@@ -457,19 +449,22 @@ interface ChatRowProps {
 }
 
 /** Paseo's workspace row (sidebar-workspace-list.tsx workspaceRow + sidebar-workspace-row-content.tsx). */
-const ChatRow = memo(function ChatRow({ colors, tokens, chat, bot, selected, touch, hoisted, onPress, onMenu }: ChatRowProps) {
+const ChatRow = memo(function ChatRow({ colors, tokens, chat, bot, touch, hoisted, onPress, onMenu }: ChatRowProps) {
   const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
   const kebabRef = useRef<View>(null);
   const bucket = chatBucket(chat);
   const title = displayTitle(chat.title);
-  const showKebab = hovered || touch;
-  const background = selected ? tokens.surfaceSidebarSelected : hovered ? colors.surface1 : "transparent";
+  const showKebab = hovered || focused || touch;
+  const background = hovered ? colors.surface1 : "transparent";
   // As in BotRow: the press target sits behind the content and the ⋮ is its sibling, so a
-  // kebab press can't also select the chat.
+  // kebab press can't also open the chat.
   return (
     <View
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
       style={[
         {
           position: "relative",
@@ -488,7 +483,7 @@ const ChatRow = memo(function ChatRow({ colors, tokens, chat, bot, selected, tou
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`${title}, ${BUCKET_LABELS[bucket]}`}
-        accessibilityState={{ selected }}
+        accessibilityHint="Opens the chat"
         onPress={onPress}
         {...contextMenuProps((anchor) => onMenu(anchor, "context"))}
         style={({ pressed }) => ({ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, borderRadius: 8, backgroundColor: pressed ? colors.surface2 : "transparent" })}
@@ -498,7 +493,7 @@ const ChatRow = memo(function ChatRow({ colors, tokens, chat, bot, selected, tou
           <View style={{ width: 16, height: 20, flexShrink: 0, alignItems: "center", justifyContent: "center" }}>
             <View style={{ position: "relative", width: 16, height: 16 }}>
               <Avatar avatar={bot.avatar} size={16} />
-              {bucket !== "done" ? <StatusBadge colors={colors} tokens={tokens} bucket={bucket} backdrop={selected ? tokens.surfaceSidebarSelected : hovered ? colors.surface1 : tokens.surfaceSidebar} /> : null}
+              {bucket !== "done" ? <StatusBadge colors={colors} tokens={tokens} bucket={bucket} backdrop={hovered ? colors.surface1 : tokens.surfaceSidebar} /> : null}
             </View>
           </View>
         ) : (
@@ -523,7 +518,7 @@ const ChatRow = memo(function ChatRow({ colors, tokens, chat, bot, selected, tou
         <View style={{ position: "absolute", top: 8, right: 12, flexDirection: "row" }}>
           {/* A short scrim in the row's colour hides the title's tail under the kebab, as native does. */}
           {touch ? null : <View pointerEvents="none" style={{ width: 16, backgroundColor: hovered ? colors.surface1 : "transparent" }} />}
-          <View style={{ backgroundColor: selected ? tokens.surfaceSidebarSelected : colors.surface1 }}>
+          <View style={{ backgroundColor: colors.surface1 }}>
             <KebabButton colors={colors} buttonRef={kebabRef} label="Chat actions" onPress={() => void measureAnchor(kebabRef).then((anchor) => anchor && onMenu(anchor, "kebab"))} />
           </View>
         </View>
@@ -533,13 +528,12 @@ const ChatRow = memo(function ChatRow({ colors, tokens, chat, bot, selected, tou
 });
 
 /** Paseo's NewWorkspaceGhostRow: the one row indented 16 so it reads as belonging to its bot. */
-function NewChatGhostRow({ colors, tokens, selected, onPress }: { colors: Colors; tokens: NativeTokens; selected: boolean; onPress(): void }) {
+function NewChatGhostRow({ colors, onPress }: { colors: Colors; onPress(): void }) {
   const { hovered, hoverProps } = useHover();
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel="New chat"
-      accessibilityState={{ selected }}
       onPress={onPress}
       {...hoverProps}
       style={({ pressed }) => [
@@ -553,7 +547,7 @@ function NewChatGhostRow({ colors, tokens, selected, onPress }: { colors: Colors
           flexDirection: "row",
           alignItems: "center",
           gap: 8,
-          backgroundColor: pressed ? colors.surface2 : selected ? tokens.surfaceSidebarSelected : hovered ? colors.surface1 : "transparent",
+          backgroundColor: pressed ? colors.surface2 : hovered ? colors.surface1 : "transparent",
         },
         noSelect,
       ]}
@@ -561,9 +555,9 @@ function NewChatGhostRow({ colors, tokens, selected, onPress }: { colors: Colors
       {({ pressed }) => (
         <>
           <View style={{ width: 16, height: 16, alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <Icon name="Plus" size={14} color={hovered || pressed || selected ? colors.foreground : colors.foregroundMuted} />
+            <Icon name="Plus" size={14} color={hovered || pressed ? colors.foreground : colors.foregroundMuted} />
           </View>
-          <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, fontSize: ui(14), color: hovered || pressed || selected ? colors.foreground : colors.foregroundMuted }}>
+          <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, fontSize: ui(14), color: hovered || pressed ? colors.foreground : colors.foregroundMuted }}>
             New chat
           </Text>
         </>

@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildAgentConfig, EMPTY_LIBRARY } from "../shared/bot";
 import { botToolName, supportsToolGrants } from "../shared/bot-tools";
-import { withPluginCommands } from "../client/chat/composer/logic";
 import { proposalIdOf } from "../shared/proposals";
 import { expandLearn, sanitizeSkillName } from "../shared/skills";
 import { newUuid } from "../shared/uuid";
@@ -31,14 +30,11 @@ describe("tool names and grants", () => {
     expect(buildAgentConfig(makeBot({ provider: "gemini", alwaysAllow: ["bots/ask_bot"] }), EMPTY_LIBRARY, "m", "", { tools })).not.toHaveProperty("toolPolicy");
   });
 
-  it("expands /learn and lists it before provider commands", () => {
+  it("expands /learn", () => {
     expect(expandLearn("/learn")).toContain("propose_skill");
     expect(expandLearn("  /learn the invoice part ")).toContain("Focus on: the invoice part.");
     expect(expandLearn("/learner")).toBeNull();
     expect(expandLearn("please /learn")).toBeNull();
-    const learn = { name: "learn", description: "ours", argumentHint: "" };
-    const provider = [{ name: "learn", description: "theirs", argumentHint: "" }, { name: "compact", description: "", argumentHint: "" }];
-    expect(withPluginCommands([learn], provider).map((command) => command.description)).toEqual(["ours", ""]);
   });
 
   it("finds the proposal behind a finished propose_skill call", () => {

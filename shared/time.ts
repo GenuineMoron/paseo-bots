@@ -10,5 +10,8 @@ export function relativeTime(iso: string | null | undefined, now: number = Date.
   if (hours < 24) return `${hours}h ago`;
   const days = Math.round(hours / 24);
   if (days < 30) return `${days}d ago`;
-  return new Date(then).toISOString().slice(0, 10);
+  // The date as the reader's calendar has it, not the UTC date.
+  const date = new Date(then);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }

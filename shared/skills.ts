@@ -17,6 +17,8 @@ export function parseSkillSource(input: string): SkillSource {
         if (mode === "blob") path = path.replace(/\/?SKILL\.md$/i, "");
         return { kind: "github", owner, repo: repo.replace(/\.git$/, ""), ref: ref ?? null, path };
       }
+      // An issue, pull request or commit link isn't a place to import skills from.
+      if (mode) throw new Error("Use a link to a repository or to a folder or file in it (…/tree/… or …/blob/…).");
       return { kind: "github", owner, repo: repo.replace(/\.git$/, ""), ref: null, path: "" };
     }
     if (/SKILL\.md$/i.test(url.pathname)) return { kind: "raw", url: source };
@@ -33,10 +35,24 @@ export function parseSkillSource(input: string): SkillSource {
 /** Reads `name` and `description` from SKILL.md frontmatter. */
 export function parseSkillFrontmatter(text: string): { name: string | null; description: string | null } {
   const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+  const lines = match?.[1]?.split(/\r?\n/) ?? [];
   const read = (key: string) => {
-    const line = match?.[1]?.split(/\r?\n/).find((entry) => entry.trim().startsWith(`${key}:`));
-    const value = line?.slice(line.indexOf(":") + 1).trim().replace(/^["']|["']$/g, "");
-    return value ? value : null;
+    // Top-level keys only: a "name:" nested under another key belongs to that key.
+    const index = lines.findIndex((entry) => entry.startsWith(`${key}:`));
+    if (index === -1) return null;
+    const value = lines[index]!.slice(key.length + 1).trim();
+    if (/^[>|][+-]?$/.test(value)) {
+      // A block scalar (">" folds lines, "|" keeps them): its text is the indented lines that follow.
+      const block: string[] = [];
+      for (const line of lines.slice(index + 1)) {
+        if (line.trim() && !/^\s/.test(line)) break;
+        block.push(line.trim());
+      }
+      const joined = block.filter(Boolean).join(value.startsWith(">") ? " " : "\n");
+      return joined || null;
+    }
+    const unquoted = value.replace(/^["']|["']$/g, "");
+    return unquoted ? unquoted : null;
   };
   return { name: read("name"), description: read("description") };
 }

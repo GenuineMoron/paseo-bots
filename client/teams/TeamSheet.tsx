@@ -115,7 +115,8 @@ export function TeamSheet({
             variant="default"
             label={group ? "Save" : "Create team"}
             disabled={!name.trim()}
-            onPress={() => onSave({ name: name.trim().slice(0, 60), logo, leadId: lead, memberIds: members.map((bot) => bot.id), instructions })}
+            // Archived members stay in the team: they aren't listed here, but saving mustn't quietly drop them.
+            onPress={() => onSave({ name: name.trim().slice(0, 60), logo, leadId: lead, memberIds: bots.filter((bot) => memberIds.includes(bot.id)).map((bot) => bot.id), instructions })}
           />
         </SheetActions>
       </Modal.Content>

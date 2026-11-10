@@ -1,5 +1,6 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { openExternalUrl, useRpc } from "@getpaseo/plugin/client";
+import { useToast } from "@getpaseo/plugin/client/react-native";
 import { SettingsAction, SettingsCard, SettingsRow, SettingsSection } from "@getpaseo/plugin/client/ui";
 import { useState } from "react";
 import { View } from "react-native";
@@ -87,6 +88,7 @@ function Catalog({ colors, pending, onConnect, keyHint }: { colors: Colors; pend
   const accounts = useAppsAccounts(true, pending !== null);
   const removeKey = useRpc(appsRemoveKeyRpc);
   const invalidate = useAppsInvalidate();
+  const toast = useToast();
   const [query, setQuery] = useState("");
   const apps = catalog.data?.apps ?? [];
   const connected = new Set((accounts.data?.accounts ?? []).filter((account) => account.status === "connected").map((account) => account.slug));
@@ -123,7 +125,7 @@ function Catalog({ colors, pending, onConnect, keyHint }: { colors: Colors; pend
         actionLabel="Remove"
         confirmTitle="Remove Composio key?"
         confirmMessage="Bots lose their connected apps until a key is added again. Your connections stay with your Composio account."
-        onConfirm={() => void removeKey({}).then(invalidate)}
+        onConfirm={() => void removeKey({}).then(invalidate).catch((error: unknown) => toast.error(`Couldn't remove the key: ${errorText(error)}`))}
       />
     </>
   );

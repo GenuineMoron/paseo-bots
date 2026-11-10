@@ -118,11 +118,16 @@ export function pick<T>(next: () => number, items: readonly T[]): T {
   return items[Math.floor(next() * items.length)]!;
 }
 
+/** `index` wrapped into 0..length-1, also for negative numbers (JS's % keeps the sign). */
+export function wrapIndex(index: number, length: number): number {
+  return ((index % length) + length) % length;
+}
+
 /** Number of colour palettes a bot or team can pin its picture to. */
 export const PALETTE_COUNT = PALETTES.length;
 
 export function paletteSwatch(index: number): string {
-  return PALETTES[index % PALETTES.length]!.body;
+  return PALETTES[wrapIndex(index, PALETTES.length)]!.body;
 }
 
 // ------------------------------------------------------------------ themes

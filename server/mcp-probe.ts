@@ -47,6 +47,16 @@ function rpcError(response: JsonRpcResponse): Error {
 
 // ---------------------------------------------------------------- stdio
 
+/** Stops a probe's server and anything it started. */
+function stop(child: ReturnType<typeof spawn>): void {
+  try {
+    if (child.pid && process.platform !== "win32") process.kill(-child.pid, "SIGKILL");
+    else child.kill();
+  } catch {
+    child.kill();
+  }
+}
+
 function probeStdio(config: Extract<McpServerConfig, { type: "stdio" }>, signal: AbortSignal): Promise<McpTool[]> {
   return new Promise((resolve, reject) => {
     const child = spawn(config.command, config.args, {
@@ -55,7 +65,10 @@ function probeStdio(config: Extract<McpServerConfig, { type: "stdio" }>, signal:
       // npx, uvx and friends are .cmd shims on Windows.
       shell: process.platform === "win32",
       windowsHide: true,
+      // Its own process group, so stopping it also stops what npx, uvx and friends started.
+      detached: process.platform !== "win32",
     });
+    child.stdin.on("error", () => {});
     let nextId = 1;
     const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
     let stdout = "";
@@ -66,7 +79,7 @@ function probeStdio(config: Extract<McpServerConfig, { type: "stdio" }>, signal:
       if (settled) return;
       settled = true;
       signal.removeEventListener("abort", onAbort);
-      child.kill();
+      stop(child);
       if (error) reject(error);
       else resolve(tools ?? []);
     };
@@ -214,15 +227,16 @@ async function probeSse(config: Extract<McpServerConfig, { type: "sse" }>, signa
   if (!stream.ok || !stream.body) throw await httpFailure(stream);
   const events = serverEvents(stream.body);
   try {
+    // Pulled by hand: a `for await` that stops early closes the generator, and the answers to
+    // the requests below arrive on this same stream.
     let endpoint: string | null = null;
-    for await (const { event, data } of events) {
-      if (event === "endpoint") {
-        endpoint = new URL(data, config.url).toString();
-        break;
-      }
+    for (let next = await events.next(); !next.done && !endpoint; next = endpoint ? next : await events.next()) {
+      if (next.value.event === "endpoint") endpoint = new URL(next.value.data, config.url).toString();
     }
     if (!endpoint) throw new Error("The server's event stream didn't say where to send messages.");
     const target = endpoint;
+    // The server names the URL to POST to, and the configured headers (often a key) go with it: only to the server's own origin.
+    if (new URL(target).origin !== new URL(config.url).origin) throw new Error("The server pointed to a different site to send messages to, so it wasn't contacted.");
     let nextId = 1;
     const send = async (payload: object) => {
       const response = await fetch(target, { method: "POST", signal, headers: { ...config.headers, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
@@ -232,9 +246,9 @@ async function probeSse(config: Extract<McpServerConfig, { type: "sse" }>, signa
     const request: Request = async (method, params) => {
       const id = nextId++;
       await send({ jsonrpc: "2.0", id, method, ...(params === undefined ? {} : { params }) });
-      for await (const { event, data } of events) {
-        if (event !== "message") continue;
-        const parsed = JSON.parse(data) as JsonRpcResponse;
+      for (let next = await events.next(); !next.done; next = await events.next()) {
+        if (next.value.event !== "message") continue;
+        const parsed = JSON.parse(next.value.data) as JsonRpcResponse;
         if (parsed.id !== id) continue;
         if (parsed.error) throw rpcError(parsed);
         return parsed.result;

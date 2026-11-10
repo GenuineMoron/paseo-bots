@@ -10,16 +10,22 @@ function useBotSettingsState() {
 }
 
 /**
- * The bots settings document with one write queue. Every write reads the latest
- * revision when it runs and retries on a conflict, so autosaves, menu actions
- * and the other plugin surface never overwrite each other.
+ * One write queue for the whole app: the sidebar shortcuts and every Bots screen are separate
+ * components with their own copy of the settings, but they write one document, so their writes
+ * wait for each other instead of colliding.
+ */
+let queue: Promise<unknown> = Promise.resolve();
+
+/**
+ * The bots settings document. Every write reads the latest revision when it runs and retries
+ * on a conflict, so autosaves, menu actions and the other plugin surfaces never overwrite each
+ * other.
  */
 export function useBotSettings() {
   const settings = useBotSettingsState();
   const toast = useToast();
   const latest = useRef(settings);
   latest.current = settings;
-  const queue = useRef<Promise<unknown>>(Promise.resolve());
 
   const commit = (mutate: (values: BotSettingsValues) => BotSettingsValues): Promise<boolean> => {
     const run = async () => {
@@ -37,8 +43,8 @@ export function useBotSettings() {
       toast.error(latest.current.saveError ?? "Couldn't save bots. Try again.");
       return false;
     };
-    const result = queue.current.then(run);
-    queue.current = result.catch(() => false);
+    const result = queue.then(run);
+    queue = result.catch(() => false);
     return result;
   };
 

@@ -1,8 +1,9 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile, rename } from "node:fs/promises";
+import { join } from "node:path";
 import { appDomain, appStatus, canonicalSlug, isComposioUrl, type AppAccount, type AppCard, type AppTool } from "../shared/apps";
 import { pluginDataPath } from "./bot-home";
+import { writeFileAtomic } from "./json-file";
 
 // Composio over its REST API, the way OpenMausBot's self-hosted mode does it:
 // one Tool Router Session per install, under one Composio user, so every
@@ -43,7 +44,9 @@ export async function readState(): Promise<State> {
   if (cached) return cached;
   try {
     cached = JSON.parse(await readFile(statePath(), "utf8")) as State;
-  } catch {
+  } catch (error) {
+    // A damaged file is kept aside, not overwritten: it holds the API key and the user id the connected accounts belong to.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") await rename(statePath(), `${statePath()}.corrupt-${Date.now()}`).catch(() => {});
     cached = { apiKey: null, userId: `paseo_bots_${randomUUID()}`, sessionId: null, mcpUrl: null, secret: randomBytes(32).toString("hex"), port: null };
   }
   return cached;
@@ -52,9 +55,7 @@ export async function readState(): Promise<State> {
 export async function writeState(patch: Partial<State>): Promise<State> {
   const next = { ...(await readState()), ...patch };
   cached = next;
-  await mkdir(dirname(statePath()), { recursive: true });
-  await writeFile(statePath(), JSON.stringify(next, null, 2), { encoding: "utf8", mode: 0o600 });
-  await chmod(statePath(), 0o600).catch(() => {});
+  await writeFileAtomic(statePath(), JSON.stringify(next, null, 2));
   return next;
 }
 

@@ -1,12 +1,12 @@
 import { useHosts, useRpc } from "@getpaseo/plugin/client";
 import { Modal, useToast } from "@getpaseo/plugin/client/react-native";
-import { SettingsAction, SettingsCard, SettingsRow, SettingsSection, SettingsSelect } from "@getpaseo/plugin/client/ui";
+import { SettingsAction, SettingsCard, SettingsInput, SettingsRow, SettingsSection, SettingsSelect, SettingsSwitch, type SettingsInputHandle } from "@getpaseo/plugin/client/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { APPS_MCP_NAME } from "../../shared/apps";
 import { botMcpServers, toolGrants } from "../../shared/bot";
 import { TOOLS_MCP_NAME } from "../../shared/bot-tools";
-import { commandListRpc, commandRemoveRpc } from "../../shared/rpc";
+import { commandAllowRpc, commandListRpc, commandRemoveRpc, ensureBotHomeRpc } from "../../shared/rpc";
 import { useAgentProfiles, useBotHost, useHostWorkspaces, usePaseoTools, useProviders } from "../data";
 import { errorText } from "../native";
 import type { PanelProps } from "./BotPanel";
@@ -28,6 +28,7 @@ export function AccessSection(props: PanelProps) {
   return (
     <>
       <PaseoToolsSection colors={colors} bot={bot} localHost={localHost} />
+      <BotToolsSection bot={bot} localHost={localHost} onPatch={onPatch} />
       <LibraryPicker {...props} kind="mcp" title="MCP servers" info="Added on top of the MCP servers the provider already loads. Paseo's own tools are always included. Add and edit servers in Skills & Tools." />
       <AppsPicker colors={colors} bot={bot} localHost={localHost} onPatch={onPatch} />
       <AdvancedToggle colors={colors} open={advanced} onToggle={() => setAdvanced(!advanced)} />
@@ -38,6 +39,25 @@ export function AccessSection(props: PanelProps) {
         </>
       ) : null}
     </>
+  );
+}
+
+/** The plugin's own tools ("bots"): other bots, past chats, and proposals the user confirms on a card. */
+function BotToolsSection({ bot, localHost, onPatch }: Pick<PanelProps, "bot" | "localHost" | "onPatch">) {
+  const host = useBotHost(bot.hostId, localHost);
+  // The plugin's tools come through this host's relay, so only bots here have them.
+  if (!host.isLocal) return null;
+  return (
+    <SettingsSection title="Bot tools" info="Tools this plugin gives the bot: other bots, its past chats and daily log, its setup, and proposals for skills, routines and app connections you confirm in the chat.">
+      <SettingsCard>
+        <SettingsSwitch
+          label="Bot tools"
+          hint={bot.botTools ? "On for new chats" : "Off for new chats. Agents with their own memory, skills and schedules, like Hermes, don't need them"}
+          value={bot.botTools}
+          onValueChange={(botTools) => onPatch({ botTools })}
+        />
+      </SettingsCard>
+    </SettingsSection>
   );
 }
 
@@ -54,7 +74,7 @@ function FolderSection({ colors, bot, localHost, onPatch }: PanelProps) {
   const folderValue = bot.cwd === null ? (host.isLocal ? MANAGED : "Choose a folder") : options.some((option) => option.value === bot.cwd) ? bot.cwd : CUSTOM;
   const pathError = pathText.trim() && !ABSOLUTE_PATH.test(pathText.trim()) ? "Use an absolute path" : null;
   return (
-    <SettingsSection title="Working folder" info="Where the bot's chats run. The shared folder keeps every bot chat in one Bots workspace.">
+    <SettingsSection title="Working folder" info="Where the bot's chats run. In the shared folder each bot has its own workspace, and any chat started there is the bot's. In a folder of your own, only the chats started from Bots are.">
       <SettingsCard>
         <SettingsSelect
           label="Folder"
@@ -92,7 +112,7 @@ function GrantsSection({ colors, bot, library, localHost, onPatch }: PanelProps)
   const [allowText, setAllowText] = useState(bot.alwaysAllow.join("\n"));
   const lines = allowText.split("\n").map((line) => line.trim()).filter(Boolean);
   // Only grants for the bot's own servers are sent; Paseo rejects the rest.
-  const active = new Set([...botMcpServers(bot, library).map((server) => server.name), ...(host.isLocal && bot.apps.length ? [APPS_MCP_NAME] : []), ...(host.isLocal ? [TOOLS_MCP_NAME] : [])]);
+  const active = new Set([...botMcpServers(bot, library).map((server) => server.name), ...(host.isLocal && bot.apps.length ? [APPS_MCP_NAME] : []), ...(host.isLocal && bot.botTools ? [TOOLS_MCP_NAME] : [])]);
   const grants = toolGrants(lines).filter((grant) => active.has(grant.server));
   const ignored = lines.length - grants.length;
   return (
@@ -129,6 +149,7 @@ function GrantsSection({ colors, bot, library, localHost, onPatch }: PanelProps)
 function PaseoToolsSection({ colors, bot, localHost }: Pick<PanelProps, "colors" | "bot" | "localHost">) {
   const host = useBotHost(bot.hostId, localHost);
   const tools = usePaseoTools(host, bot.provider);
+  const toast = useToast();
   const [busy, setBusy] = useState(false);
   const state = tools.state;
   const label = !state ? (tools.loading ? "Checking..." : "Couldn't read the host's settings") : state.on ? "Included in every chat" : "Turned off";
@@ -152,7 +173,7 @@ function PaseoToolsSection({ colors, bot, localHost }: Pick<PanelProps, "colors"
             disabled={busy}
             onPress={() => {
               setBusy(true);
-              void tools.turnOn().finally(() => setBusy(false));
+              void tools.turnOn().catch((error: unknown) => toast.error(`Couldn't turn it on: ${errorText(error)}`)).finally(() => setBusy(false));
             }}
           />
         ) : (
@@ -303,7 +324,7 @@ function AllowedCommands({ colors, bot }: Pick<PanelProps, "colors" | "bot">) {
   const key = ["paseo-bots", "commands", bot.id];
   const rules = useQuery({ queryKey: key, queryFn: () => list({ botId: bot.id }) });
   const items = rules.data?.rules ?? [];
-  const info = "Commands this bot runs without asking you: the exact command, in the exact folder. Add one with Always allow on the command's approval card.";
+  const info = "Commands this bot runs without asking you: the exact command, in the exact folder.";
   return (
     <SettingsSection title="Commands" info={info}>
       <SettingsCard>
@@ -313,7 +334,7 @@ function AllowedCommands({ colors, bot }: Pick<PanelProps, "colors" | "bot">) {
         <Modal title="Allowed commands" open onOpenChange={(next) => !next && setOpen(false)}>
           <Modal.Content>
             <SettingsCard>
-              {items.length === 0 ? <CardNote colors={colors} text="None yet. Add one with Always allow on a command's approval card." /> : null}
+              {items.length === 0 ? <CardNote colors={colors} text="None yet." /> : null}
               {items.map((rule) => (
                 <SettingsAction
                   key={rule.id}
@@ -328,9 +349,43 @@ function AllowedCommands({ colors, bot }: Pick<PanelProps, "colors" | "bot">) {
                 />
               ))}
             </SettingsCard>
+            <AddCommand bot={bot} onAdded={() => void queryClient.invalidateQueries({ queryKey: key })} />
           </Modal.Content>
         </Modal>
       ) : null}
     </SettingsSection>
+  );
+}
+
+/** Adds a command, run exactly as typed in exactly that folder (the bot's own by default). */
+function AddCommand({ bot, onAdded }: { bot: PanelProps["bot"]; onAdded(): void }) {
+  const allow = useRpc(commandAllowRpc);
+  const ensureHome = useRpc(ensureBotHomeRpc);
+  const toast = useToast();
+  const [command, setCommand] = useState("");
+  const [folder, setFolder] = useState("");
+  const [busy, setBusy] = useState(false);
+  const commandInput = useRef<SettingsInputHandle>(null);
+  const folderError = folder.trim() && !ABSOLUTE_PATH.test(folder.trim()) ? "Use an absolute path" : null;
+  const add = async () => {
+    setBusy(true);
+    try {
+      const cwd = folder.trim() || bot.cwd || (await ensureHome({ botId: bot.id })).path;
+      await allow({ botId: bot.id, command: command.trim(), cwd });
+      commandInput.current?.replaceText("");
+      setCommand("");
+      onAdded();
+    } catch (error) {
+      toast.error(errorText(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <SettingsCard>
+      <SettingsInput ref={commandInput} label="Command" placeholder="npm test" onChangeText={setCommand} />
+      <SettingsInput label="Folder" hint="Empty: the bot's folder" error={folderError} placeholder={bot.cwd ?? "The bot's folder"} onChangeText={setFolder} />
+      <SettingsAction label="Allow this command" actionLabel="Add" disabled={busy || !command.trim() || !!folderError} onPress={() => void add()} />
+    </SettingsCard>
   );
 }

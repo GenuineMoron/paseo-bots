@@ -1,4 +1,4 @@
-import { lstat, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { z } from "zod";
 import { BotMcpServerSchema, BotSchema, botMcpServers, botSkills, newBotId, newRoutineId, TeamFileTeamSchema, type Bot, type BotGroup, type BotMcpServer, type Library, type TeamFileTeam } from "../shared/bot";
@@ -69,7 +69,9 @@ async function collect(root: string, include: (path: string) => boolean): Promis
     for (const name of names) {
       if (Object.keys(files).length >= MAX_FILES) return;
       const path = join(dir, name);
-      const info = await stat(path);
+      // A link could point anywhere on this machine (a bot can create them); only real files are shared.
+      const info = await lstat(path);
+      if (info.isSymbolicLink()) continue;
       if (info.isDirectory()) await walk(path);
       else {
         const key = relative(root, path).split(sep).join("/");
@@ -168,6 +170,7 @@ export async function importBot({ botId, json }: { botId: string; json: string }
   const now = new Date().toISOString();
   const bot: Bot = {
     ...parsed.bot,
+    botTools: true,
     id: botId,
     hostId: null,
     cwd: null,
@@ -176,7 +179,6 @@ export async function importBot({ botId, json }: { botId: string; json: string }
     mcpServerIds: [],
     apps: [],
     appRules: {},
-    voice: { name: null, readReplies: false },
     // Contact with other bots starts at asking, as on a new bot.
     contactBots: "ask",
     routines: parsed.bot.routines.map((routine) => ({ ...routine, id: newRoutineId(), enabled: false, resultsChatId: null, createdAt: now })),

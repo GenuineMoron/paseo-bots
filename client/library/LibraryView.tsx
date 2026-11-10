@@ -65,7 +65,7 @@ export function LibraryView({ colors, layout, values, commit, target, onTarget: 
   const appAccounts = useAppsAccounts(appsConfigured, pending !== null);
   const appCatalog = useAppsCatalog(appsConfigured);
 
-  // Finish a pending sign-in when Composio reports the account, or give up after five minutes.
+  // Finish a pending sign-in when Composio reports the account.
   useEffect(() => {
     if (!pending) return;
     // A new account: signing in to another account of a connected app mustn't finish at once.
@@ -76,10 +76,14 @@ export function LibraryView({ colors, layout, values, commit, target, onTarget: 
       setPending(null);
       setTarget({ kind: "app", id: pending.slug });
       void invalidateApps();
-    } else if (Date.now() - pending.since > 5 * 60_000) {
-      setPending(null);
     }
   }, [appAccounts.data, pending]);
+  // Give up on a sign-in nobody finished. A timer, not a check on each poll: identical polls don't re-run the effect above.
+  useEffect(() => {
+    if (!pending) return;
+    const timer = setTimeout(() => setPending(null), Math.max(0, pending.since + 5 * 60_000 - Date.now()));
+    return () => clearTimeout(timer);
+  }, [pending]);
 
   const library = values.library ?? EMPTY_LIBRARY;
   const bots = values.bots;
@@ -165,7 +169,7 @@ export function LibraryView({ colors, layout, values, commit, target, onTarget: 
   };
 
   const removeServer = async (id: string) => {
-    if (await save((current, currentBots) => ({ library: { ...current, mcpServers: current.mcpServers.filter((server) => server.id !== id) }, bots: forgetItem(currentBots, "mcp", id) }))) {
+    if (await save((current, currentBots) => ({ library: { ...current, mcpServers: current.mcpServers.filter((server) => server.id !== id) }, bots: forgetItem(currentBots, "mcp", id, current.mcpServers.find((server) => server.id === id)?.name) }))) {
       setTarget(null);
     }
   };

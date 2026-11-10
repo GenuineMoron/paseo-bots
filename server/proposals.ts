@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Proposal } from "../shared/proposals";
 import { pluginDataPath } from "./bot-home";
+import { JsonFile } from "./json-file";
 import { writeSkill } from "./library";
 
 // Proposals wait in one file until the user saves or dismisses their card.
@@ -12,31 +12,22 @@ const KEEP = 200;
 
 type NewProposal = Pick<Proposal, "botId" | "agentId" | "kind" | "data">;
 
-function storePath(): string {
-  return join(pluginDataPath(), "proposals.json");
-}
-
-async function load(): Promise<Proposal[]> {
-  try {
-    return ((JSON.parse(await readFile(storePath(), "utf8")) as { proposals?: Proposal[] }).proposals ?? []);
-  } catch {
-    return [];
-  }
-}
-
-let queue: Promise<unknown> = Promise.resolve();
+const store = new JsonFile<{ proposals: Proposal[] }>(
+  () => join(pluginDataPath(), "proposals.json"),
+  () => ({ proposals: [] }),
+  (raw) => {
+    const proposals = (raw as { proposals?: unknown }).proposals;
+    if (!Array.isArray(proposals)) throw new Error("not a proposals file");
+    return { proposals: proposals as Proposal[] };
+  },
+);
 
 /** One read-modify-write at a time. */
 function update<T>(change: (proposals: Proposal[]) => { proposals: Proposal[]; result: T }): Promise<T> {
-  const run = async () => {
-    const { proposals, result } = change(await load());
-    await mkdir(pluginDataPath(), { recursive: true });
-    await writeFile(storePath(), JSON.stringify({ proposals: proposals.slice(-KEEP) }, null, 2), "utf8");
-    return result;
-  };
-  const next = queue.then(run);
-  queue = next.catch(() => {});
-  return next;
+  return store.update((current) => {
+    const { proposals, result } = change(current.proposals);
+    return { value: { proposals: proposals.slice(-KEEP) }, result };
+  });
 }
 
 export function createProposal(input: NewProposal): Promise<Proposal> {
@@ -45,7 +36,7 @@ export function createProposal(input: NewProposal): Promise<Proposal> {
 }
 
 export async function getProposal(id: string): Promise<Proposal | null> {
-  return (await load()).find((proposal) => proposal.id === id) ?? null;
+  return (await store.read()).proposals.find((proposal) => proposal.id === id) ?? null;
 }
 
 function resolve(id: string, status: "accepted" | "dismissed"): Promise<Proposal> {

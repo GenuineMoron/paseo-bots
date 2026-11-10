@@ -1,14 +1,17 @@
-import { describe, expect, it, vi } from "vitest";
-import { buildAgentConfig, EMPTY_LIBRARY } from "../shared/bot";
+import { describe, expect, it } from "vitest";
+import type { BotChats } from "../server/bot-chats";
+import { buildAgentConfig, EMPTY_LIBRARY, type Bot } from "../shared/bot";
 import { fakeHost, makeBot } from "./helpers";
 
-const started: { botId: string; prompt: string; title: string; labels: Record<string, string> }[] = [];
-vi.mock("../server/chats", () => ({
-  startChat: vi.fn(async (_host: unknown, _relay: unknown, bot: { id: string }, input: { prompt: string; title: string; labels: Record<string, string> }) => {
+const started: { botId: string; prompt?: string; title?: string; labels?: Record<string, string> }[] = [];
+/** Starts every chat as "chat-new" and remembers how. */
+const fakeChats = {
+  start: async (bot: Bot, input: { prompt?: string; title?: string; labels?: Record<string, string> }) => {
     started.push({ botId: bot.id, ...input });
     return "chat-new";
-  }),
-}));
+  },
+  botForFolder: async () => null,
+} as unknown as BotChats;
 
 interface FakeChat {
   status: string;
@@ -52,6 +55,7 @@ describe("asking other bots", () => {
     const { askBot, askPrompt, ASKED_BY_LABEL } = await import("../server/tools/bots");
     const scout = makeBot({ id: "bot-scout", name: "Scout" });
     const host = fakeHost([scout, makeBot({ id: "bot-inbox", name: "Inbox" }), makeBot({ id: "bot-old", name: "Old", archived: true })]);
+    host.useChats(fakeChats);
     const chats: Record<string, FakeChat> = { "caller-chat": { status: "running", labels: { "paseo-bots.bot": "bot-scout" } }, "chat-new": { status: "running", labels: {}, reply: "Three unread, one urgent." } };
     host.attach(fakePaseo(chats));
     const caller = { bot: scout, agentId: "caller-chat", host, relay: null as never };
@@ -77,6 +81,7 @@ describe("asking other bots", () => {
     const { checkChat } = await import("../server/tools/bots");
     const scout = makeBot({ id: "bot-scout", name: "Scout" });
     const host = fakeHost([scout, makeBot({ id: "bot-inbox", name: "Inbox" })]);
+    host.useChats(fakeChats);
     host.attach(
       fakePaseo({
         asked: { status: "running", title: "Scout: count", labels: { "paseo-bots.bot": "bot-inbox", "paseo-bots.asked-by": "bot-scout" } },

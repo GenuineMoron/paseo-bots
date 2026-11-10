@@ -1,9 +1,9 @@
-import type { WireAttachment } from "./attachments";
 import { BOT_LABEL, buildAgentConfig, defaultModelId, type Bot, type Library, type PluginServers } from "./bot";
-import type { ChatConfig } from "./chat-config";
 
 /** Label on chats started by a routine, carrying the routine id. */
 export const ROUTINE_LABEL = "paseo-bots.routine";
+/** Label on chats started empty with "New chat"; one left without a message is reused. */
+export const NEW_CHAT_LABEL = "paseo-bots.new";
 /** Longest title Paseo accepts (protocol/agent-title-limits.ts). */
 const MAX_TITLE_CHARS = 200;
 
@@ -42,11 +42,8 @@ interface WorkspaceHandle {
       agentId?: string;
       config: ReturnType<typeof buildAgentConfig>;
       labels: Record<string, string>;
-      prompt: string;
+      prompt?: string;
       title?: string;
-      images?: { data: string; mimeType: string }[];
-      attachments?: WireAttachment[];
-      clientMessageId?: string;
     }): Promise<{ readonly id: string }>;
   };
 }
@@ -100,17 +97,8 @@ async function ensureBotWorkspace(api: ChatApi, bot: Bot, placement: BotPlacemen
   });
 }
 
-/** Renames the bot's workspace after the bot is renamed; does nothing if it doesn't exist yet. */
-export async function syncBotWorkspaceTitle(api: ChatApi, bot: Bot, placement: BotPlacement): Promise<void> {
-  if (placement.projectRoot === null) return;
-  const { entries } = await api.workspaces.list();
-  const mine = entries.find((workspace) => normalize(workspace.workspaceDirectory ?? workspace.projectRootPath) === normalize(placement.path));
-  if (mine && mine.title !== bot.name) await api.workspaces.ref(mine).setTitle(bot.name);
-}
-
 export interface StartChatInput {
   bot: Bot;
-  config?: ChatConfig;
   /** Resolves the bot's MCP servers. */
   library: Library;
   /** The chat's agent id, picked in advance so its tools URL can name it. */
@@ -118,34 +106,28 @@ export interface StartChatInput {
   /** The plugin's servers for this chat (tools, connected apps), from the relay on the bot's host. */
   plugin?: PluginServers;
   placement: BotPlacement;
-  prompt: string;
+  /** The first message; without one the chat waits for the person. */
+  prompt?: string;
   systemPrompt: string;
   /** Defaults to Paseo's own title derived from the prompt. */
   title?: string;
   labels?: Record<string, string>;
-  images?: { data: string; mimeType: string }[];
-  attachments?: WireAttachment[];
-  clientMessageId?: string;
 }
 
 /**
- * Starts a chat (a thread in the bot's workspace) with the bot's configuration
- * and sends the first message. Used by the app and by the routine scheduler.
+ * Starts a chat (an agent in the bot's workspace) with the bot's configuration, and sends the
+ * first message when there is one. Used by the server for every chat the plugin starts.
  */
 export async function startBotChat(api: ChatApi, input: StartChatInput): Promise<string> {
-  const { featureValues, ...overrides } = input.config ?? {};
-  const bot = { ...input.bot, ...overrides };
+  const { bot } = input;
   const model = bot.model ?? (await resolveDefaultModel(api, bot.provider));
   const workspace = await ensureBotWorkspace(api, bot, input.placement);
   const agent = await workspace.agents.create({
     ...(input.agentId ? { agentId: input.agentId } : {}),
-    config: { ...buildAgentConfig(bot, input.library, model, input.systemPrompt, input.plugin), ...(featureValues ? { featureValues } : {}) },
+    config: buildAgentConfig(bot, input.library, model, input.systemPrompt, input.plugin),
     labels: { [BOT_LABEL]: bot.id, ...input.labels },
-    prompt: input.prompt,
+    ...(input.prompt ? { prompt: input.prompt } : {}),
     ...(input.title ? { title: input.title.slice(0, MAX_TITLE_CHARS) } : {}),
-    ...(input.images?.length ? { images: input.images } : {}),
-    ...(input.attachments?.length ? { attachments: input.attachments } : {}),
-    ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
   });
   return agent.id;
 }

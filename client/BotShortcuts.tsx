@@ -2,19 +2,21 @@ import type { PluginPopoverProps, PluginScreenProps, PluginSidebarItemProps } fr
 import { useRpc } from "@getpaseo/plugin/client";
 import { copyText, Icon, useToast } from "@getpaseo/plugin/client/react-native";
 import { SidebarSeparator } from "@getpaseo/plugin/client/ui";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Modal as NativeModal, Pressable, Text, View, useWindowDimensions, type LayoutRectangle } from "react-native";
 import { newBotId, presetFromBot, type Bot } from "../shared/bot";
-import { moveKey, moveKeyTo, orderSidebarBots } from "../shared/sidebar";
+import { aggregateBuckets, BUCKET_LABELS, chatBucket, moveKey, moveKeyTo, orderSidebarBots, type ChatBucket } from "../shared/sidebar";
 import { randomSeed } from "../shared/avatar";
 import { exportBotRpc, importBotRpc } from "../shared/rpc";
 import { Avatar } from "./Avatar";
 import { BotsSurface } from "./BotsSurface";
 import { botMenuEntries } from "./BotDialogs";
+import { useBotChats, useBotHost, useChatInvalidation } from "./data";
 import { requestIntent, type BotAction } from "./intent";
-import { errorText, nativeTokens, useHover } from "./native";
+import { errorText, nativeTokens, useHover, type NativeTokens } from "./native";
 import { ui } from "./typography";
 import { useBotSettings } from "./useBotSettings";
+import { useEscapeToClose } from "./ui/escape";
 import { contextMenuProps, Entries } from "./ui/Menu";
 import { BotSortableList, type BotDragHandle } from "./BotSortableList";
 
@@ -22,6 +24,8 @@ import { BotSortableList, type BotDragHandle } from "./BotSortableList";
 export function BotShortcuts(props: PluginSidebarItemProps) {
   const { currentScreen, theme } = props;
   const { settings, commit } = useBotSettings();
+  // Keeps the bots' working and needs-you dots live.
+  useChatInvalidation(props.host);
   const toast = useToast();
   const [collapsed, setCollapsed] = useState(false);
   const bots = settings.status === "ready" ? orderSidebarBots(settings.values.bots, settings.values.sidebarBotOrder) : [];
@@ -34,16 +38,28 @@ export function BotShortcuts(props: PluginSidebarItemProps) {
     <>
     <SidebarSeparator />
     <View style={{ paddingTop: 4, paddingBottom: 8 }}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Bots section"
-        accessibilityState={{ expanded: !collapsed }}
-        onPress={() => setCollapsed((value) => !value)}
-        style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, minHeight: 28 }}
-      >
-        <Icon name={collapsed ? "ChevronRight" : "ChevronDown"} size={12} color={colors.foregroundMuted} />
-        <Text style={{ fontSize: ui(12), color: colors.foregroundMuted }}>Bots</Text>
-      </Pressable>
+      <View style={{ flexDirection: "row", alignItems: "center", paddingRight: 8 }}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Bots section"
+          accessibilityState={{ expanded: !collapsed }}
+          onPress={() => setCollapsed((value) => !value)}
+          style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, minHeight: 28 }}
+        >
+          <Icon name={collapsed ? "ChevronRight" : "ChevronDown"} size={12} color={colors.foregroundMuted} />
+          <Text style={{ fontSize: ui(12), color: colors.foregroundMuted }}>Bots</Text>
+        </Pressable>
+        {/* Every bot, teams, Skills & Tools and New bot live on the Bots screen. */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="All bots"
+          hitSlop={6}
+          onPress={() => props.openScreen({ screenId: "bots" })}
+          style={({ pressed }) => ({ width: 24, height: 24, borderRadius: 6, alignItems: "center", justifyContent: "center", backgroundColor: pressed || currentScreen?.screenId === "bots" ? nativeTokens(colors).interactionHighlight : "transparent" })}
+        >
+          <Icon name="LayoutGrid" size={13} color={colors.foregroundMuted} />
+        </Pressable>
+      </View>
       {!collapsed ? <BotSortableList key={props.host.id} bots={bots} hostId={props.host.id} onReorder={reorder} renderBot={(bot, drag) => (
         <SidebarBot
           key={bot.id}
@@ -67,7 +83,10 @@ function SidebarBot({ bot, active, openScreen, openPopover, theme, layout, host,
   const [anchor, setAnchor] = useState<LayoutRectangle | null>(null);
   const [menuHeight, setMenuHeight] = useState(0);
   const viewport = useWindowDimensions();
-  const close = () => setAnchor(null);
+  const chats = useBotChats(useBotHost(bot.hostId, host), bot.id);
+  const bucket = aggregateBuckets((chats.data ?? []).map(chatBucket));
+  const close = useCallback(() => setAnchor(null), []);
+  useEscapeToClose(anchor !== null, close);
   const actions = (point?: LayoutRectangle) => {
     if (layout.compact || !point) openPopover((props) => <BotActions {...props} botId={bot.id} />);
     else { setMenuHeight(0); setAnchor(point); }
@@ -88,6 +107,7 @@ function SidebarBot({ bot, active, openScreen, openPopover, theme, layout, host,
     >
       <Avatar avatar={bot.avatar} size={32} dark={tokens.dark} />
       <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: active ? colors.foreground : colors.foregroundMuted, fontSize: ui(14), opacity: bot.archived ? 0.6 : 1 }}>{bot.name}</Text>
+      <StatusDot tokens={tokens} bucket={bucket} />
     </Pressable>
     {anchor ? (
       <NativeModal transparent visible animationType="none" onRequestClose={close}>
@@ -105,6 +125,12 @@ function SidebarBot({ bot, active, openScreen, openPopover, theme, layout, host,
     ) : null}
     </>
   );
+}
+
+/** A dot while one of the bot's chats is working, or needs the user. */
+function StatusDot({ tokens, bucket }: { tokens: NativeTokens; bucket: ChatBucket }) {
+  const color = bucket === "running" ? tokens.statusDotRunning : bucket === "needs_input" || bucket === "attention" ? tokens.statusDotWarning : bucket === "failed" ? tokens.statusDotDanger : null;
+  return color ? <View accessibilityLabel={BUCKET_LABELS[bucket]} style={{ width: 7, height: 7, borderRadius: 4, marginRight: 4, backgroundColor: color }} /> : null;
 }
 
 /** Uses the nested panel's menu entries and its existing dialogs for complex actions. */

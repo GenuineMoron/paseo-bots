@@ -1,5 +1,4 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import type { PaseoApi } from "./paseo";
@@ -10,9 +9,10 @@ import { ROUTINE_LABEL } from "../shared/chat";
 import { ROUTINE_RUN_CARD, type RoutineRecord, type RoutineRun, type RoutineRunCard } from "../shared/rpc";
 import { decide } from "../shared/routines";
 import { pluginDataPath } from "./bot-home";
-import { startChat } from "./chats";
+import { JsonFile } from "./json-file";
 import type { BotsHost } from "./host";
 import { readBody, type Relay } from "./relay";
+import { withTimeout } from "./timeout";
 
 const TICK_MS = 30_000;
 const KEEP_RUNS = 30;
@@ -23,6 +23,9 @@ const WEBHOOK_TEXT_MAX = 48_000;
 /** OpenMausBot's webhook limits: 10 calls a minute, and at most 3 runs still working. */
 const WEBHOOK_CALLS_PER_MINUTE = 10;
 const WEBHOOK_UNFINISHED = 3;
+/** A Paseo call that never answers must not hold up every routine behind it. */
+const PASEO_CALL_MS = 15_000;
+const START_CHAT_MS = 90_000;
 
 type Records = Record<string, RoutineRecord>;
 type Trigger = RoutineRun["trigger"];
@@ -35,8 +38,9 @@ interface LegacyState {
   lastAgentId?: string | null;
 }
 
-const recordsPath = () => join(pluginDataPath(), "routines.json");
-const hooksPath = () => join(pluginDataPath(), "webhooks.json");
+type StoredRecords = Record<string, RoutineRecord | LegacyState>;
+const recordsFile = new JsonFile<StoredRecords>(() => join(pluginDataPath(), "routines.json"), () => ({}));
+const hooksFile = new JsonFile<Record<string, string>>(() => join(pluginDataPath(), "webhooks.json"), () => ({}));
 
 /** routines.json kept only the last run before run history; those become a one-run history. */
 function upgrade(entry: RoutineRecord | LegacyState): RoutineRecord {
@@ -46,19 +50,6 @@ function upgrade(entry: RoutineRecord | LegacyState): RoutineRecord {
   const status = legacy.lastStatus === "failed" || legacy.lastStatus === "skipped-busy" || legacy.lastStatus === "skipped-missed" ? legacy.lastStatus : "succeeded";
   const run: RoutineRun = { id: "legacy", trigger: "schedule", scheduledFor: legacy.lastRunAt, startedAt: legacy.lastRunAt, endedAt: null, status, agentId: legacy.lastAgentId ?? null, output: null, error: legacy.lastError ?? null };
   return { lastRunAt: legacy.lastRunAt, runs: [run] };
-}
-
-async function readJson<T>(path: string, fallback: T): Promise<T> {
-  try {
-    return JSON.parse(await readFile(path, "utf8")) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-async function writeJson(path: string, value: unknown, mode?: number): Promise<void> {
-  await mkdir(pluginDataPath(), { recursive: true });
-  await writeFile(path, JSON.stringify(value, null, 2), { encoding: "utf8", ...(mode ? { mode } : {}) });
 }
 
 export interface WebhookEvent {
@@ -94,7 +85,6 @@ export function runPrompt(routine: Routine, event?: WebhookEvent): string {
 export class RoutineScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
-  private queue: Promise<unknown> = Promise.resolve();
   private readonly hookCalls = new Map<string, number[]>();
 
   constructor(
@@ -124,20 +114,15 @@ export class RoutineScheduler {
 
   /** One change to routines.json at a time. */
   private update<T>(change: (records: Records) => T | Promise<T>): Promise<T> {
-    const run = async () => {
-      const raw = await readJson<Record<string, RoutineRecord | LegacyState>>(recordsPath(), {});
+    return recordsFile.update(async (raw) => {
       const records: Records = Object.fromEntries(Object.entries(raw).map(([id, entry]) => [id, upgrade(entry)]));
       const result = await change(records);
-      await writeJson(recordsPath(), records);
-      return result;
-    };
-    const next = this.queue.then(run);
-    this.queue = next.catch(() => {});
-    return next;
+      return { value: records, result };
+    });
   }
 
   async status() {
-    const raw = await readJson<Record<string, RoutineRecord | LegacyState>>(recordsPath(), {});
+    const raw = await recordsFile.read();
     const now = Date.now();
     const routines = Object.fromEntries(
       Object.entries(raw).map(([id, entry]) => {
@@ -156,13 +141,12 @@ export class RoutineScheduler {
 
   /** The routine's webhook URL, making (or replacing) its secret. */
   async webhookUrl(routineId: string, rotate = false): Promise<{ url: string }> {
-    const hooks = await readJson<Record<string, string>>(hooksPath(), {});
-    if (!hooks[routineId] || rotate) {
-      hooks[routineId] = randomBytes(24).toString("hex");
-      await writeJson(hooksPath(), hooks, 0o600);
-    }
+    const secret = await hooksFile.update((hooks) => {
+      const next = !hooks[routineId] || rotate ? randomBytes(24).toString("hex") : hooks[routineId]!;
+      return { value: { ...hooks, [routineId]: next }, result: next };
+    });
     const port = await this.relay.start();
-    return { url: `http://127.0.0.1:${port}/hooks/${routineId}/${hooks[routineId]}` };
+    return { url: `http://127.0.0.1:${port}/hooks/${routineId}/${secret}` };
   }
 
   /** A routine chat's turn ended: record how its run went and update the run's card. */
@@ -195,7 +179,7 @@ export class RoutineScheduler {
   private async working(agentId: string | null): Promise<boolean> {
     if (!agentId || !this.paseo) return false;
     try {
-      const status = (await this.paseo.agents.ref(agentId).refresh())?.agent.status;
+      const status = (await withTimeout(this.paseo.agents.ref(agentId).refresh(), PASEO_CALL_MS, "Checking the previous run"))?.agent.status;
       return status === "running" || status === "initializing";
     } catch {
       return false;
@@ -203,7 +187,7 @@ export class RoutineScheduler {
   }
 
   private newChat(bot: Bot, routine: Routine, prompt: string): Promise<string> {
-    return startChat(this.host, this.relay, bot, { prompt, title: routine.name, labels: { [ROUTINE_LABEL]: routine.id } });
+    return this.host.chats.start(bot, { prompt, title: routine.name, labels: { [ROUTINE_LABEL]: routine.id } });
   }
 
   /** Starts a run in a new chat, or records why it didn't; the results chat gets a card either way. */
@@ -222,7 +206,7 @@ export class RoutineScheduler {
         let busy = 0;
         for (const entry of recent) if (await this.working(entry.agentId)) busy++;
         if (busy >= limit) Object.assign(run, { status: "skipped-busy", endedAt: now });
-        else run.agentId = await this.newChat(bot, routine, runPrompt(routine, event));
+        else run.agentId = await withTimeout(this.newChat(bot, routine, runPrompt(routine, event)), START_CHAT_MS, "Starting the run");
       } catch (error) {
         Object.assign(run, { status: "failed", endedAt: now, error: error instanceof Error ? error.message : String(error) });
       }
@@ -283,7 +267,7 @@ export class RoutineScheduler {
     const [, routineId, secret] = match as unknown as [string, string, string];
     const reply = (status: number, body: Record<string, unknown>) => response.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
     if (request.method !== "POST") return reply(405, { error: "Use POST." }), true;
-    const expected = (await readJson<Record<string, string>>(hooksPath(), {}))[routineId];
+    const expected = (await hooksFile.read())[routineId];
     if (!expected || !timingSafeEqual(Buffer.from(expected), Buffer.from(secret))) return reply(404, { error: "not found" }), true;
     const values = await this.host.values();
     const bot = values?.bots.find((entry) => !entry.archived && entry.routines.some((routine) => routine.id === routineId));

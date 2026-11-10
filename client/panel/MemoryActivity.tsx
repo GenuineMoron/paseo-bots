@@ -8,7 +8,7 @@ import { dayName, journalSource, journalSummary } from "../../shared/activity";
 import type { Bot } from "../../shared/bot";
 import { memoryJournalRpc, memoryLogDeleteRpc, memoryLogRpc, memoryUndoRpc, type JournalRow } from "../../shared/rpc";
 import { relativeTime } from "../../shared/time";
-import { ToolCallDetailsContent } from "../chat/stream/details";
+import { DiffView } from "../ui/DiffView";
 import { confirmDialog, errorText, MONO_FONT, MONO_PROPS } from "../native";
 import { code, codeLine, ui } from "../typography";
 import type { PanelProps } from "./BotPanel";
@@ -64,7 +64,7 @@ export function ChangesSheet({ colors, bot, onUndone, onClose }: { colors: Color
         <Modal.Content>
           <Text style={{ fontSize: ui(14), color: colors.foregroundMuted }}>{`${file} · ${relativeTime(open.at)} · ${journalSource(open)}`}</Text>
           {open.diff ? (
-            <ToolCallDetailsContent colors={colors} detail={{ type: "edit", filePath: file, unifiedDiff: open.diff }} maxHeight={420} />
+            <DiffView colors={colors} diff={open.diff} />
           ) : (
             <Text style={{ fontSize: ui(14), color: colors.foregroundMuted }}>{open.kind === "deleted" ? "The file was deleted." : "Too large to show."}</Text>
           )}

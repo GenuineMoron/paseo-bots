@@ -575,7 +575,7 @@ function applyChange(values: BotSettingsValues, change: Change, context: ApplyCo
     }
     case "remove_mcp_server": {
       const server = findServer(library, change.server);
-      return { ...values, library: { ...library, mcpServers: library.mcpServers.filter((entry) => entry.id !== server.id) }, bots: forgetItem(values.bots, "mcp", server.id) };
+      return { ...values, library: { ...library, mcpServers: library.mcpServers.filter((entry) => entry.id !== server.id) }, bots: forgetItem(values.bots, "mcp", server.id, server.name) };
     }
     case "set_defaults": {
       const current = values.defaults ?? DEFAULT_BOT_DEFAULTS;
@@ -629,6 +629,28 @@ export function resolveChanges(changes: readonly Change[], context: ApplyContext
 
 const list = (items: readonly string[]) => items.join(", ");
 
+const EXCERPT_CHARS = 300;
+
+/**
+ * Text a bot wrote, as the card shows it: in quotes, on one line, cut at 300 characters. The
+ * person approves what they can read, so instructions and prompts are shown, not just named.
+ */
+function excerpt(text: string): string {
+  const line = oneLine(text).replace(/"/g, "'");
+  return `"${line.length > EXCERPT_CHARS ? `${line.slice(0, EXCERPT_CHARS)}…` : line}"`;
+}
+
+/** A code span that a backtick inside the text can't close early. */
+function codeSpan(text: string): string {
+  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(longest + 1);
+  return longest > 0 ? `${fence} ${text} ${fence}` : `${fence}${text}${fence}`;
+}
+
+function playbookText(playbook: { name: string; triggers: readonly string[]; instructions: string }): string {
+  return `${playbook.name} (when a chat starts with ${list(playbook.triggers.map((trigger) => `"${trigger}"`))}): ${excerpt(playbook.instructions)}`;
+}
+
 function appText(entry: AppInputValue): string {
   const tools = !entry.tools || entry.tools === "all" ? "" : entry.tools === "read" ? " (read-only tools)" : ` (${list(entry.tools)})`;
   return `${entry.app}${tools}${entry.account ? " with one account" : ""}`;
@@ -646,8 +668,8 @@ function agentText(fields: BotFieldValues): string[] {
 function fieldsText(fields: BotFieldValues): string[] {
   const parts: string[] = [];
   if (fields.title !== undefined) parts.push(`title "${oneLine(fields.title)}"`);
-  if (fields.description !== undefined) parts.push("a new blurb");
-  if (fields.instructions !== undefined) parts.push("new instructions");
+  if (fields.description !== undefined) parts.push(`blurb ${excerpt(fields.description)}`);
+  if (fields.instructions !== undefined) parts.push(`instructions ${excerpt(fields.instructions)}`);
   parts.push(...agentText(fields));
   if (fields.contact_bots !== undefined) parts.push({ ask: "asks before contacting other bots", allow: "contacts other bots freely", off: "doesn't contact other bots" }[fields.contact_bots]);
   if (fields.avatar) parts.push(fields.avatar.image_url ? "a picture" : fields.avatar.image_url === null ? "the pixel face back" : "a different face");
@@ -664,6 +686,12 @@ function scheduleText(input: z.infer<typeof ScheduleInput>): string {
   }
 }
 
+/** The names (never the values, which are usually keys) of the settings a server is given. */
+function keysText(label: string, values: Record<string, string> | undefined): string {
+  const names = Object.keys(values ?? {});
+  return names.length ? ` ${label} ${list(names)}` : "";
+}
+
 /** One Markdown line for the card, as the user reads the change. */
 export function describeChange(change: Change): string {
   switch (change.type) {
@@ -674,7 +702,7 @@ export function describeChange(change: Change): string {
         ...(change.skills?.length ? [`skills ${list(change.skills)}`] : []),
         ...(change.mcp_servers?.length ? [`MCP servers ${list(change.mcp_servers)}`] : []),
         ...(change.apps?.length ? [`apps ${list(change.apps.map(appText))}`] : []),
-        ...(change.playbooks?.length ? [`playbooks ${list(change.playbooks.map((playbook) => playbook.name))}`] : []),
+        ...(change.playbooks?.length ? [`playbooks ${change.playbooks.map(playbookText).join("; ")}`] : []),
       ];
       return `**New bot ${oneLine(change.name)}**${parts.length ? `: ${parts.join("; ")}` : ""}`;
     }
@@ -691,7 +719,7 @@ export function describeChange(change: Change): string {
         ...(change.remove_apps?.length ? [`no longer uses ${list(change.remove_apps)}`] : []),
         ...(change.allow_tools?.length ? [`uses ${list(change.allow_tools)} without asking`] : []),
         ...(change.disallow_tools?.length ? [`asks again before ${list(change.disallow_tools)}`] : []),
-        ...(change.add_playbooks?.length ? [`playbooks ${list(change.add_playbooks.map((playbook) => playbook.name))}`] : []),
+        ...(change.add_playbooks?.length ? [`playbooks ${change.add_playbooks.map(playbookText).join("; ")}`] : []),
         ...(change.remove_playbooks?.length ? [`removes playbooks ${list(change.remove_playbooks)}`] : []),
       ];
       return `**${change.bot}**: ${parts.join("; ") || "no changes"}`;
@@ -699,11 +727,11 @@ export function describeChange(change: Change): string {
     case "delete_bot":
       return `**Delete bot ${change.bot}**; its chats stay in Paseo's history`;
     case "add_routine":
-      return `**${change.bot}**: new routine "${change.name}", ${scheduleText(change.schedule)}`;
+      return `**${change.bot}**: new routine "${change.name}", ${scheduleText(change.schedule)}, doing ${excerpt(change.instructions)}`;
     case "update_routine": {
       const parts = [
         ...(change.name !== undefined ? [`renamed to "${change.name}"`] : []),
-        ...(change.instructions !== undefined ? ["new instructions"] : []),
+        ...(change.instructions !== undefined ? [`now doing ${excerpt(change.instructions)}`] : []),
         ...(change.schedule ? [scheduleText(change.schedule)] : []),
         ...(change.enabled !== undefined ? [change.enabled ? "resumed" : "paused"] : []),
       ];
@@ -716,7 +744,7 @@ export function describeChange(change: Change): string {
       const parts = [
         ...(change.lead ? [`led by ${change.lead}`] : []),
         ...(members.length ? [`with ${list(members)}`] : []),
-        ...(change.instructions?.trim() ? ["shared instructions"] : []),
+        ...(change.instructions?.trim() ? [`shared instructions ${excerpt(change.instructions)}`] : []),
       ];
       return `**New team ${oneLine(change.name)}**${parts.length ? `: ${parts.join("; ")}` : ""}`;
     }
@@ -726,7 +754,7 @@ export function describeChange(change: Change): string {
         ...(change.lead !== undefined ? [change.lead ? `led by ${change.lead}` : "no Chief of Staff"] : []),
         ...(change.add_members?.length ? [`adds ${list(change.add_members)}`] : []),
         ...(change.remove_members?.length ? [`removes ${list(change.remove_members)}`] : []),
-        ...(change.instructions !== undefined ? ["new shared instructions"] : []),
+        ...(change.instructions !== undefined ? [`shared instructions ${excerpt(change.instructions)}`] : []),
         ...(change.logo ? ["a new logo"] : []),
       ];
       return `**Team ${change.team}**: ${parts.join("; ") || "no changes"}`;
@@ -736,7 +764,7 @@ export function describeChange(change: Change): string {
     case "set_skill":
       return `**Skill ${change.skill}**: ${change.enabled ? "on" : "off"} for every bot that uses it`;
     case "add_mcp_server":
-      return `**New MCP server ${change.name}**: ${change.command ? `runs \`${[change.command, ...(change.args ?? [])].join(" ")}\`` : `connects to ${change.url}`}; off until it passes a test in Skills & Tools`;
+      return `**New MCP server ${change.name}**: ${change.command ? `runs ${codeSpan([change.command, ...(change.args ?? [])].join(" "))}${keysText("with settings", change.env)}` : `connects to ${change.url}${keysText("sending", change.headers)}`}; off until it passes a test in Skills & Tools`;
     case "set_mcp_server":
       return `**MCP server ${change.server}**: ${change.enabled ? "on" : "off"}`;
     case "remove_mcp_server":
@@ -764,6 +792,9 @@ export function changeWarnings(changes: readonly Change[]): string[] {
     if (apps?.length) warnings.push(`${who} may use ${list(apps.map((entry) => entry.app))} with your connected accounts.`);
     if ((change.type === "create_bot" || change.type === "update_bot") && change.working_folder) warnings.push(`${who} works in ${change.working_folder}.`);
     if (change.type === "add_mcp_server" && change.command) warnings.push(`The ${change.name} MCP server runs a program on this computer once it's on.`);
+    if ((change.type === "create_bot" || change.type === "update_bot") && change.instructions !== undefined) warnings.push(`${who} gets new standing instructions that guide everything it does.`);
+    if (change.type === "add_routine") warnings.push(`${who} will run "${change.name}" on its own, without anyone watching.`);
+    if (change.type === "add_mcp_server" && (Object.keys(change.env ?? {}).length > 0 || Object.keys(change.headers ?? {}).length > 0)) warnings.push(`The ${change.name} MCP server is given settings or headers: check them in Skills & Tools before turning it on.`);
     if (change.type === "delete_bot") warnings.push(`Deletes the bot ${change.bot}.`);
     if (change.type === "delete_team") warnings.push(`Deletes the team ${change.team}.`);
     if (change.type === "remove_mcp_server") warnings.push(`Removes the MCP server ${change.server}.`);

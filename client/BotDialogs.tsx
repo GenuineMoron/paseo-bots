@@ -264,7 +264,7 @@ export interface BotMenuActions {
 export function botMenuEntries(actions: BotMenuActions): MenuEntry[] {
   const { bot } = actions;
   const entries: MenuEntry[] = [{ label: "Open bot settings", icon: "Settings", onSelect: actions.onOpenSettings }];
-  if (actions.onOpenInPaseo) entries.push({ label: "Open in Paseo", icon: "ExternalLink", onSelect: actions.onOpenInPaseo });
+  if (actions.onOpenInPaseo) entries.push({ label: "Open workspace", icon: "ExternalLink", onSelect: actions.onOpenInPaseo });
   entries.push({ label: bot.pinned ? "Unpin" : "Pin to top", icon: bot.pinned ? "PinOff" : "Pin", onSelect: actions.onTogglePin });
   if (actions.onMoveUp || actions.onMoveDown) {
     entries.push({ label: "Move up", icon: "ArrowUp", disabled: !actions.onMoveUp, onSelect: () => actions.onMoveUp?.() });
@@ -291,7 +291,6 @@ export interface ChatMenuActions {
   onTogglePin(): void;
   /** Present in manual order; undefined at an edge. `null` hides the pair (pinned chats, activity order). */
   move: { up?: () => void; down?: () => void } | null;
-  onOpenInPaseo?: () => void;
   onArchive(): Promise<void>;
 }
 
@@ -307,7 +306,6 @@ export function chatMenuEntries(actions: ChatMenuActions): MenuEntry[] {
     entries.push({ label: "Move up", icon: "ArrowUp", disabled: !actions.move.up, onSelect: () => actions.move?.up?.() });
     entries.push({ label: "Move down", icon: "ArrowDown", disabled: !actions.move.down, onSelect: () => actions.move?.down?.() });
   }
-  if (actions.onOpenInPaseo) entries.push({ label: "Open in Paseo", icon: "ExternalLink", onSelect: actions.onOpenInPaseo });
   entries.push({ label: "Archive", icon: "Archive", pendingLabel: "Archiving...", onSelect: actions.onArchive });
   return entries;
 }
@@ -345,7 +343,7 @@ export function ExportDialog({ colors, bot, onClose }: { colors: Colors; bot: Bo
             hint={json ? `${(json.length / 1000).toFixed(1)} KB · host, folder, tool grants, secrets and chats aren't included.` : "Building..."}
             actionLabel="Copy"
             disabled={!json}
-            onPress={() => void copyText(json!).then(() => toast.show("Bot file copied", { variant: "success" }))}
+            onPress={() => void copyText(json!).then(() => toast.show("Bot file copied", { variant: "success" }), () => toast.error("Unable to copy"))}
           />
         </SettingsCard>
         <Text {...MONO_PROPS} selectable numberOfLines={16} style={{ fontFamily: MONO_FONT, fontSize: code(), lineHeight: codeLine(), color: colors.foregroundMuted }}>

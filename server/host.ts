@@ -2,6 +2,7 @@ import type { PaseoApi } from "./paseo";
 import type { PluginSettings } from "@getpaseo/plugin/server";
 import { BOT_LABEL, EMPTY_LIBRARY, type Bot, type BotSettingsValues, type botSettings, type Library } from "../shared/bot";
 import { ROUTINE_LABEL } from "../shared/chat";
+import type { BotChats } from "./bot-chats";
 
 // What every server feature needs: the saved settings (read-only on the
 // server), and the plugin's Paseo API. The SDK only hands the API out inside
@@ -15,6 +16,18 @@ export class BotsHost {
   private readonly listeners = new Set<Listener>();
 
   constructor(readonly settings: PluginSettings<typeof botSettings.schema>) {}
+
+  private botChats: BotChats | null = null;
+
+  /** Set once at startup; features that start or recognise bot chats use it. */
+  useChats(chats: BotChats): void {
+    this.botChats = chats;
+  }
+
+  get chats(): BotChats {
+    if (!this.botChats) throw new Error("paseo-bots isn't ready yet.");
+    return this.botChats;
+  }
 
   attach(paseo: PaseoApi): void {
     if (this.api === paseo) return;
@@ -61,14 +74,15 @@ export class BotsHost {
     if (this.chatBots.get(agentId) === null) return null;
     const snapshot = await this.paseo?.agents.ref(agentId).refresh().catch(() => null);
     if (!snapshot) return null;
-    const botId = snapshot.agent.labels?.[BOT_LABEL] ?? null;
+    const labels = snapshot.agent.labels ?? {};
+    // Started by the plugin (labelled), or in a bot's folder from anywhere else, such as Paseo's New agent.
+    const botId = labels[BOT_LABEL] ?? (this.botChats ? ((await this.botChats.botForFolder(snapshot.agent.cwd))?.id ?? null) : null);
     if (this.chatBots.size > 500) this.chatBots.clear();
     this.chatBots.set(agentId, botId);
-    const labels = snapshot.agent.labels ?? {};
     return botId ? { botId, title: snapshot.agent.title ?? null, routineId: labels[ROUTINE_LABEL] ?? null, labels } : null;
   }
 
-  /** The bot a chat belongs to, from the label it was created with; null for other agents. */
+  /** The bot a chat belongs to, from its label or its folder; null for other agents. */
   async botIdOf(agentId: string): Promise<string | null> {
     const known = this.chatBots.get(agentId);
     return known !== undefined ? known : ((await this.chatOf(agentId))?.botId ?? null);

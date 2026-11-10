@@ -138,12 +138,6 @@ const AppRuleSchema = z.object({
 });
 export type AppRule = z.infer<typeof AppRuleSchema>;
 
-/** How a bot sounds when its replies are read aloud: a device voice by name (voices differ per device) and whether finished replies are read out. */
-const BotVoiceSchema = z.object({
-  name: z.string().nullable().default(null),
-  readReplies: z.boolean().default(false),
-});
-export type BotVoice = z.infer<typeof BotVoiceSchema>;
 
 export const BotSchema = z.object({
   id: z.string(),
@@ -172,9 +166,13 @@ export const BotSchema = z.object({
   apps: z.array(z.string()).default([]),
   /** Limits on connected apps, by slug. An app without one allows every tool and account. */
   appRules: z.record(z.string(), AppRuleSchema).default({}),
-  voice: BotVoiceSchema.default({ name: null, readReplies: false }),
   /** Whether the bot may ask other bots for help: after the user approves each request, freely, or not at all. */
   contactBots: z.enum(["ask", "allow", "off"]).default("ask"),
+  /**
+   * The plugin's own tools (propose changes, skills and routines, search its chats, ask other bots).
+   * Off for agents that bring their own, such as Hermes, whose memory, skills and schedules live in it.
+   */
+  botTools: z.boolean().default(true),
   routines: z.array(RoutineSchema).default([]),
   playbooks: z.array(PlaybookSchema).default([]),
   /** Working folder. Null means the shared managed folder on the storing host. */
@@ -606,6 +604,48 @@ export function buildAgentConfig(bot: Bot, library: Library, model: string, syst
   };
 }
 
+/** The parts of a Paseo agent session config a bot decides. */
+export interface BotSessionConfig {
+  provider: string;
+  cwd: string;
+  model?: string;
+  modeId?: string;
+  thinkingOptionId?: string;
+  systemPrompt?: string;
+  /** Paseo's own MCP server config type is a little looser than the library's; the bot only adds entries. */
+  mcpServers?: Record<string, unknown>;
+  toolPolicy?: { preapproved: { kind: "mcp"; server: string; tool: string }[] };
+}
+
+/**
+ * A chat's session config with its bot's setup applied, however the chat was started: from the
+ * Bots screen, a routine, another bot, or Paseo's own New agent in the bot's workspace.
+ *
+ * The bot's provider always applies (that's what the bot is). A model, mode or thinking level
+ * already chosen for that provider is kept, so a pick in Paseo's New agent dialog wins; otherwise
+ * the bot's own apply. The system prompt is the bot's unless the chat brought one, and the bot's
+ * MCP servers and tool grants are added to whatever the chat already has.
+ */
+export function applyBotSetup<Config extends BotSessionConfig>(bot: Bot, library: Library, config: Config, systemPrompt: string): Config {
+  const sameProvider = config.provider === bot.provider;
+  const pick = (chosen: string | undefined, saved: string | null) => (sameProvider && chosen ? chosen : (saved ?? undefined));
+  const mcpServers = { ...mcpServersRecord(botMcpServers(bot, library)), ...config.mcpServers };
+  const grants = supportsToolGrants(bot.provider) ? toolGrants(bot.alwaysAllow).filter((grant) => grant.server in mcpServers) : [];
+  const preapproved = [...(config.toolPolicy?.preapproved ?? []), ...grants.filter((grant) => !config.toolPolicy?.preapproved?.some((held) => held.server === grant.server && held.tool === grant.tool))];
+  const next: Config = { ...config, provider: bot.provider, systemPrompt: config.systemPrompt ?? systemPrompt };
+  const model = pick(config.model, bot.model);
+  const modeId = pick(config.modeId, bot.modeId);
+  const thinkingOptionId = pick(config.thinkingOptionId, bot.thinkingOptionId);
+  for (const [key, value] of [["model", model], ["modeId", modeId], ["thinkingOptionId", thinkingOptionId]] as const) {
+    if (value) next[key] = value as Config[typeof key];
+    else delete next[key];
+  }
+  if (Object.keys(mcpServers).length > 0) next.mcpServers = mcpServers as Config["mcpServers"];
+  if (preapproved.length > 0) next.toolPolicy = { ...config.toolPolicy, preapproved };
+  else delete next.toolPolicy;
+  return next;
+}
+
 /** "server/tool" entries → Paseo's exact MCP tool grants. Malformed entries are skipped. */
 export function toolGrants(entries: readonly string[]): { kind: "mcp"; server: string; tool: string }[] {
   return entries.flatMap((entry) => {
@@ -716,6 +756,14 @@ export function splitArgs(text: string): string[] {
   return args;
 }
 
+/** The inverse of `splitArgs`. There's no escape syntax, so an argument holding both kinds of quote can't round-trip exactly. */
 export function joinArgs(args: readonly string[]): string {
-  return args.map((arg) => (arg === "" || /[\s"']/.test(arg) ? `"${arg.replace(/"/g, "'")}"` : arg)).join(" ");
+  return args
+    .map((arg) => {
+      if (arg !== "" && !/[\s"']/.test(arg)) return arg;
+      if (!arg.includes('"')) return `"${arg}"`;
+      if (!arg.includes("'")) return `'${arg}'`;
+      return `"${arg.replace(/"/g, "'")}"`;
+    })
+    .join(" ");
 }

@@ -1,6 +1,6 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { SettingsAction } from "@getpaseo/plugin/client/ui";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Pressable, View } from "react-native";
 import { PALETTE_COUNT, paletteSwatch } from "../../shared/pixel";
 import { pickFileHandles, squareImage } from "../web";
@@ -72,8 +72,16 @@ export function PictureSource(props: { colors: Colors; imageUrl: string | null; 
 
 function ImageUrlField({ colors, imageUrl, hint, placeholder, onChange }: { colors: Colors; imageUrl: string | null; hint: string; placeholder: string; onChange(imageUrl: string | null): void }) {
   const [text, setText] = useState(imageUrl ?? "");
+  // The field edits its own text; when the picture changes from outside (a new face, a reroll) it starts over from it.
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    if ((imageUrl ?? "") === text.trim() || (imageUrl === null && !IMAGE_URL.test(text.trim()))) return;
+    setText(imageUrl ?? "");
+    setVersion((current) => current + 1);
+  }, [imageUrl]);
   return (
     <InputField
+      key={version}
       colors={colors}
       label="Image URL"
       hint={hint}

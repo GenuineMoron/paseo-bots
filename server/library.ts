@@ -4,6 +4,7 @@ import { dirname, join, posix, relative, sep } from "node:path";
 import type { LibrarySkill } from "../shared/bot";
 import { parseSkillFrontmatter, parseSkillSource, sanitizeSkillName } from "../shared/skills";
 import { botDataPath, botsHomePath, pluginDataPath } from "./bot-home";
+import { fetchPublicText } from "./safe-fetch";
 
 // The shared skill library: one folder per skill under plugin-data/library/skills.
 // Bots that use the managed folder get a link to each of their skills in
@@ -20,14 +21,29 @@ function librarySkillsPath(): string {
   return join(pluginDataPath(), "library", "skills");
 }
 
+/** Skill folder names: no leading dot, so "." and ".." can never reach outside the skills folder. */
+const SKILL_FOLDER = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
 export function librarySkillPath(id: string): string {
+  if (!SKILL_FOLDER.test(id)) throw new Error(`"${id}" isn't a valid skill name.`);
   return join(librarySkillsPath(), id);
 }
 
-async function fetchText(url: string): Promise<string> {
-  const response = await fetch(url, { headers: { "User-Agent": "paseo-bots", Accept: "application/vnd.github+json" } });
-  if (!response.ok) throw new Error(`${url} answered ${response.status}.`);
-  return response.text();
+const fetchText = (url: string) => fetchPublicText(url, { accept: "application/vnd.github+json, text/plain, */*", maxBytes: MAX_FILE_BYTES * 2 });
+
+/** Runs `work` over `items`, a few at a time, keeping the results in order. */
+async function inParallel<T, R>(items: readonly T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length) {
+        const index = next++;
+        results[index] = await work(items[index]!);
+      }
+    }),
+  );
+  return results;
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -43,7 +59,7 @@ async function saveSkill(files: Map<string, string>, source: string, fallbackNam
     const target = join(dir, ...path.split("/"));
     if (!target.startsWith(dir + sep)) continue;
     await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, text, "utf8");
+    await writeFile(target, text, { encoding: "utf8", mode: 0o600 });
   }
   return { id, description: meta.description ?? "", source };
 }
@@ -67,6 +83,7 @@ export async function importSkills({ source: input }: { source: string }): Promi
   const api = `https://api.github.com/repos/${owner}/${repo}`;
   const ref = source.ref ?? (await fetchJson<{ default_branch: string }>(api)).default_branch;
   const tree = await fetchJson<{ tree: TreeEntry[]; truncated: boolean }>(`${api}/git/trees/${encodeURIComponent(ref)}?recursive=1`);
+  if (tree.truncated) throw new Error(`${owner}/${repo} is too large to list in one go. Import a folder of it instead, e.g. ${owner}/${repo}/skills.`);
   const prefix = source.path ? `${source.path}/` : "";
   const skillDirs = tree.tree
     .filter((entry) => entry.type === "blob" && posix.basename(entry.path) === "SKILL.md" && (entry.path === `${prefix}SKILL.md` || entry.path.startsWith(prefix)))
@@ -82,10 +99,8 @@ export async function importSkills({ source: input }: { source: string }): Promi
       // Nested skills are imported on their own.
       .filter((entry) => !skillDirs.some((other) => other !== dir && other.startsWith(base) && entry.path.startsWith(`${other}/`)))
       .slice(0, MAX_FILES_PER_SKILL);
-    const files = new Map<string, string>();
-    for (const blob of blobs) {
-      files.set(blob.path.slice(base.length), await fetchText(`https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${blob.path}`));
-    }
+    const texts = await inParallel(blobs, 6, (blob) => fetchText(`https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${blob.path}`));
+    const files = new Map(blobs.map((blob, index) => [blob.path.slice(base.length), texts[index]!] as const));
     const origin = `github.com/${owner}/${repo}${dir === "." ? "" : `/${dir}`}`;
     skills.push(await saveSkill(files, origin, dir === "." ? repo : posix.basename(dir)));
   }
@@ -127,7 +142,7 @@ export async function readSkill({ id }: { id: string }) {
 export async function writeSkill({ id, text }: { id: string; text: string }) {
   const dir = librarySkillPath(id);
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, "SKILL.md"), text, "utf8");
+  await writeFile(join(dir, "SKILL.md"), text, { encoding: "utf8", mode: 0o600 });
   return { description: parseSkillFrontmatter(text).description ?? "", sha: sha256(text) };
 }
 

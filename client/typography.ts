@@ -83,10 +83,6 @@ export function content(): number {
   return current.content;
 }
 
-export function contentLine(): number {
-  return Math.round(current.content * 1.4);
-}
-
 export function code(): number {
   return current.code;
 }

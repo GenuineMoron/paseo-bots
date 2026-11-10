@@ -1,9 +1,12 @@
-import { getPaseoClient, usePaseo, useHosts } from "@getpaseo/plugin/client";
-import type { PaseoAgent, PaseoApi } from "./paseo";
+import { getPaseoClient, usePaseo, useHosts, useRpc } from "@getpaseo/plugin/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo } from "react";
-import { BOT_LABEL } from "../shared/bot";
+import { useCallback, useEffect, useMemo } from "react";
+import { applyAgentUpdate, groupChats, type BotChatLists } from "../shared/chat-lists";
 import { paseoToolsState, type PaseoToolsConfig } from "../shared/paseo-tools";
+import { botWorkspacesRpc } from "../shared/rpc";
+import { createPersistedCache } from "./cache";
+import type { PaseoAgent, PaseoApi } from "./paseo";
+import { removeItem } from "./storage";
 
 export interface LocalHost {
   id: string;
@@ -92,36 +95,94 @@ export function useHostWorkspaces(host: BotHost) {
   });
 }
 
-export function useBotChats(host: BotHost, botId: string) {
+// ------------------------------------------------------------------ bot chats
+
+const NO_CHATS: PaseoAgent[] = [];
+const CHAT_LIST_KEY = "paseo-bots";
+const chatsKey = (hostKey: string) => [CHAT_LIST_KEY, "chats", hostKey];
+
+type HostChats = BotChatLists<PaseoAgent>;
+
+// Saved per host, so the bots' chats show at once after a restart or on a slow host and refresh behind.
+const savedChats = createPersistedCache<HostChats>({ key: "paseo-bots:chat-lists:v2", maxEntries: 8, maxBytes: 1_000_000 });
+// The custom chat view's stores, retired with it.
+for (const key of ["paseo-bots:chats:v1", "paseo-bots:chat-lists:v1", "@paseo-bots:composer-drafts"]) void removeItem(key);
+
+/** Kept this long after the last screen using them closes (react-query drops unused data after 5 minutes). */
+const KEEP_QUERY_MS = 24 * 3_600_000;
+/** Paseo's page size for agent lists. */
+const AGENT_PAGE = 200;
+
+/** The agent as a saved copy shows it: never mid-turn or waiting on a permission it can't answer. */
+function settled(agent: PaseoAgent): PaseoAgent {
+  return { ...agent, status: "idle", pendingPermissions: [], activeTurn: null };
+}
+
+async function listAgents(api: PaseoApi): Promise<PaseoAgent[]> {
+  const agents: PaseoAgent[] = [];
+  let cursor: string | undefined;
+  for (let pages = 0; pages < 50; pages++) {
+    const result = await api.agents.list({ includeBackground: true, page: { limit: AGENT_PAGE, ...(cursor ? { cursor } : {}) } });
+    agents.push(...result.entries.map((entry) => entry.agent));
+    cursor = result.pageInfo.nextCursor ?? undefined;
+    if (!result.pageInfo.hasMore || !cursor) break;
+  }
+  return agents;
+}
+
+/** Every bot's chats on a host, from one list of its agents. */
+function useHostChats<T>(host: BotHost, select: (chats: HostChats) => T) {
+  const queryClient = useQueryClient();
+  const botWorkspaces = useRpc(botWorkspacesRpc);
+  const queryKey = chatsKey(host.key);
+  // Phones load the saved lists asynchronously; use them if the first fetch hasn't landed.
+  useEffect(() => {
+    void savedChats.ready.then(() => {
+      const saved = savedChats.get(host.key);
+      if (saved && !queryClient.getQueryData(queryKey)) queryClient.setQueryData(queryKey, saved, { updatedAt: 0 });
+    });
+  }, [host.key]);
   return useQuery({
-    queryKey: ["paseo-bots", "chats", host.key, botId],
+    queryKey,
     enabled: !!host.api,
-    // The local host pushes agent updates (useChatInvalidation); other hosts are polled.
+    // Shown at once if saved, but old: the host is asked as soon as the list mounts.
+    initialData: () => savedChats.get(host.key),
+    initialDataUpdatedAt: 0,
+    gcTime: KEEP_QUERY_MS,
+    // The local host pushes agent updates (useChatInvalidation), so its lists stay current; a
+    // full read now and then catches anything missed while disconnected. Other hosts are polled.
+    staleTime: host.isLocal ? 60_000 : 0,
     refetchInterval: host.isLocal ? false : 15_000,
-    queryFn: async (): Promise<PaseoAgent[]> => {
-      const result = await host.api!.agents.list({ filter: { labels: { [BOT_LABEL]: botId } } });
-      return result.entries
-        .map((entry) => entry.agent)
-        .filter((agent) => !agent.archivedAt)
-        .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+    queryFn: async (): Promise<HostChats> => {
+      // Bot workspaces are known to this host's plugin; on other hosts chats are found by their label.
+      const [agents, owned] = await Promise.all([listAgents(host.api!), host.isLocal ? botWorkspaces({}) : null]);
+      const chats = groupChats(agents, Object.fromEntries((owned?.workspaces ?? []).map((entry) => [entry.workspaceId, entry.botId])));
+      savedChats.set(host.key, { ...chats, byBot: Object.fromEntries(Object.entries(chats.byBot).map(([botId, list]) => [botId, list.map(settled)])) });
+      return chats;
     },
+    select,
   });
 }
 
-/** Refetches chat lists shortly after any agent update, so chats routines start show up too. */
-export function useChatInvalidation() {
-  const paseo = usePaseo();
-  const queryClient = useQueryClient();
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
+/** A bot's live chats, newest first. */
+export function useBotChats(host: BotHost, botId: string) {
+  return useHostChats(host, useCallback((chats: HostChats) => chats.byBot[botId] ?? NO_CHATS, [botId]));
+}
+
+/** One live subscription to agent updates per host connection, however many screens ask for it. */
+const watchers = new WeakMap<object, { count: number; stop(): void }>();
+
+function watchAgents(paseo: PaseoApi, hostKey: string, queryClient: ReturnType<typeof useQueryClient>): () => void {
+  let watcher = watchers.get(paseo);
+  if (!watcher) {
     let closed = false;
     let subscription: { release(): Promise<void> } | null = null;
-    const unsubscribe = paseo.agents.subscribe(() => {
-      if (timer) return;
-      timer = setTimeout(() => {
-        timer = null;
-        void queryClient.invalidateQueries({ queryKey: ["paseo-bots", "chats"] });
-      }, 500);
+    const unsubscribe = paseo.agents.subscribe((update) => {
+      const current = queryClient.getQueryData<HostChats>(chatsKey(hostKey));
+      // Before the first list arrives there's nothing to update: the list will include it.
+      if (!current) return;
+      const next = applyAgentUpdate(current, update);
+      if (next !== current) queryClient.setQueryData(chatsKey(hostKey), next);
     });
     // The daemon only sends agent updates to sessions that subscribed through a list request.
     void paseo.agents
@@ -131,13 +192,57 @@ export function useChatInvalidation() {
         else subscription = result.subscription;
       })
       .catch(() => {});
-    return () => {
-      closed = true;
-      if (timer) clearTimeout(timer);
-      unsubscribe();
-      void subscription?.release();
+    watcher = {
+      count: 0,
+      stop: () => {
+        closed = true;
+        unsubscribe();
+        void subscription?.release();
+      },
     };
-  }, [paseo, queryClient]);
+    watchers.set(paseo, watcher);
+  }
+  watcher.count++;
+  const held = watcher;
+  return () => {
+    if (--held.count > 0) return;
+    held.stop();
+    if (watchers.get(paseo) === held) watchers.delete(paseo);
+  };
+}
+
+/** Keeps the local host's chat lists live: each agent update is applied as it arrives. */
+export function useChatInvalidation(local: LocalHost) {
+  const paseo = usePaseo();
+  const queryClient = useQueryClient();
+  useEffect(() => watchAgents(paseo, local.id, queryClient), [paseo, local.id, queryClient]);
+}
+
+/** Re-reads a host's chats, e.g. after starting one. */
+export function refreshChats(queryClient: ReturnType<typeof useQueryClient>, hostKey: string): Promise<void> {
+  return queryClient.invalidateQueries({ queryKey: chatsKey(hostKey) });
+}
+
+/** The bot's workspace on a host, as far as the chat lists know: its own, else its newest chat's. */
+export function botWorkspaceId(queryClient: ReturnType<typeof useQueryClient>, hostKey: string, botId: string): string | undefined {
+  const chats = queryClient.getQueryData<HostChats>(chatsKey(hostKey));
+  const owned = Object.entries(chats?.workspaces ?? {}).find(([, owner]) => owner === botId)?.[0];
+  return owned ?? chats?.byBot[botId]?.find((chat) => chat.workspaceId)?.workspaceId ?? undefined;
+}
+
+/** A chat's whole timeline, oldest first, page by page (a transcript needs all of it). */
+export async function fullTimeline(api: PaseoApi, agentId: string) {
+  const handle = api.agents.ref(agentId);
+  let page = await handle.timeline.refetch({ direction: "tail", projection: "projected", limit: AGENT_PAGE });
+  if (page.error) throw new Error(page.error);
+  let entries = page.entries;
+  for (let pages = 0; pages < 100 && page.hasOlder && page.startCursor; pages++) {
+    page = await handle.timeline.refetch({ direction: "before", cursor: page.startCursor, projection: "projected", limit: AGENT_PAGE });
+    if (page.error) throw new Error(page.error);
+    if (page.entries.length === 0) break;
+    entries = [...page.entries, ...entries];
+  }
+  return entries;
 }
 
 /** The host's Paseo-tools settings for a provider, and a way to turn them on. */

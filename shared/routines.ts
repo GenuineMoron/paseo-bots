@@ -4,6 +4,9 @@ import type { Routine, RoutineSchedule } from "./bot";
 /** A run missed by more than this is skipped instead of caught up (OpenMausBot uses 12 hours). */
 const CATCH_UP_MS = 12 * 60 * 60 * 1000;
 
+/** A stored time like "25:99" would roll over into another day; such a routine never fires instead. */
+const VALID_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+
 function atLocalTime(day: Date, time: string): Date {
   const [hours, minutes] = time.split(":").map(Number) as [number, number];
   const at = new Date(day);
@@ -34,6 +37,7 @@ export function latestDue(schedule: RoutineSchedule, since: Date, now: Date): Da
       return at && at > since ? at : null;
     }
     case "daily": {
+      if (!VALID_TIME.test(schedule.time)) return null;
       for (let back = 0; back <= 7; back++) {
         const day = new Date(now);
         day.setDate(now.getDate() - back);
@@ -65,7 +69,7 @@ export function nextRun(schedule: RoutineSchedule, since: Date, now: Date): Date
       return cron ? nextCronTime(cron, now) : null;
     }
     case "daily": {
-      if (schedule.weekdays.length === 0) return null;
+      if (schedule.weekdays.length === 0 || !VALID_TIME.test(schedule.time)) return null;
       for (let ahead = 0; ahead <= 7; ahead++) {
         const day = new Date(now);
         day.setDate(now.getDate() + ahead);
@@ -197,7 +201,8 @@ function parseCronField(source: string, bounds: (typeof CRON_FIELDS)[number]): S
       if (!/^\d+$/.test(base)) throw new Error(`Invalid cron ${bounds.name} value`);
       start = Number.parseInt(base, 10);
       if (start < bounds.min || start > bounds.max) throw new Error(`Invalid cron ${bounds.name} value`);
-      end = start;
+      // "5/15" is cron for "from 5 to the end, every 15"; without a step it is just 5.
+      end = stepSource === undefined ? start : bounds.max;
     }
     for (let value = start; value <= end; value += step) allowed.add(value);
   }
@@ -333,10 +338,12 @@ export function scheduleToCron(schedule: RoutineSchedule): string | null {
       return `${Number(minutes)} ${Number(hours)} * * ${dow}`;
     }
     case "interval": {
+      // Only cadences cron can express exactly (it restarts each hour and each day); anything else stays an interval.
       const { minutes } = schedule;
-      if (minutes < 60) return `*/${minutes} * * * *`;
-      const hours = Math.round(minutes / 60);
-      if (hours >= 24) return "0 9 * * *";
+      if (minutes < 60) return 60 % minutes === 0 ? `*/${minutes} * * * *` : null;
+      if (minutes === 1440) return "0 9 * * *";
+      const hours = minutes / 60;
+      if (!Number.isInteger(hours) || 24 % hours !== 0) return null;
       return hours === 1 ? "0 * * * *" : `0 */${hours} * * *`;
     }
   }

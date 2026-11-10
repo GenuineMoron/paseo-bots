@@ -16,9 +16,7 @@ import { BotsHost } from "./server/host";
 import { Relay } from "./server/relay";
 import { acceptProposal, dismissProposal, getProposal } from "./server/proposals";
 import { BOT_TOOLS } from "./server/tools";
-import { saveUpload } from "./server/uploads";
-import { configureBotChat } from "./server/chat-config";
-import { chatConfigRpc } from "./shared/chat-config";
+import { BotChats } from "./server/bot-chats";
 import { botSettings, EMPTY_LIBRARY } from "./shared/bot";
 import { shellCommand } from "./shared/commands";
 import {
@@ -39,13 +37,15 @@ import {
   memoryReadRpc,
   memoryUndoRpc,
   memoryWriteRpc,
-  mountRpc,
   mcpProbeRpc,
   mcpSourcesRpc,
   proposalAcceptRpc,
   proposalDismissRpc,
   proposalGetRpc,
   appsAccountsRpc,
+  botWorkspacesRpc,
+  chatBotRpc,
+  chatNewRpc,
   avatarGenerateRpc,
   avatarKeyStatusRpc,
   avatarRemoveKeyRpc,
@@ -66,7 +66,6 @@ import {
   skillReadRpc,
   skillWriteRpc,
   systemPromptRpc,
-  uploadRpc,
 } from "./shared/rpc";
 
 export default function contribute(server: PluginServerContext) {
@@ -80,11 +79,6 @@ export default function contribute(server: PluginServerContext) {
     .then(migrateBotSkills)
     .catch((error: unknown) => console.error("paseo-bots: couldn't prepare the Bots folder", error));
   const settings = server.registerSettings(botSettings);
-  server.handle(chatConfigRpc, async (input, { paseo }) => {
-    const state = await settings.read();
-    if (state.status !== "ready" || !state.values.bots.some((bot) => bot.id === input.botId)) throw new Error("Bot unavailable.");
-    return configureBotChat(paseo, input);
-  });
   const library = async () => {
     const state = await settings.read();
     return state.status === "ready" ? (state.values.library ?? EMPTY_LIBRARY) : EMPTY_LIBRARY;
@@ -92,6 +86,10 @@ export default function contribute(server: PluginServerContext) {
   const host = new BotsHost(settings);
   // Bots' tools and connected apps go through this relay; it reads the saved settings on every call.
   const relay = new Relay(host, BOT_TOOLS);
+  const chats = new BotChats(host, relay);
+  host.useChats(chats);
+  // A renamed, archived or new bot changes which folders are bots', and what their workspaces are called.
+  const stopWatchingBots = host.settings.subscribe(() => chats.botsChanged());
   void relay.start().catch((error: unknown) => console.error("paseo-bots: couldn't start the relay", error));
   const scheduler = new RoutineScheduler(host, relay);
   const journal = new MemoryJournal();
@@ -146,9 +144,19 @@ export default function contribute(server: PluginServerContext) {
   server.handle(appsDisconnectRpc, disconnect);
   server.handle(appsRenameRpc, renameAccount);
   server.handle(appsToolsRpc, appTools);
-  server.handle(mountRpc, async ({ botId, agentId }) => {
+  server.handle(chatNewRpc, async ({ botId, prompt }, context) => {
+    attach(context);
     const bot = await host.bot(botId);
-    return { tools: await relay.mountTools(botId, agentId), apps: bot?.apps.length ? await relay.mountApps(botId) : null };
+    if (!bot || bot.archived) throw new Error("That bot no longer exists.");
+    return { agentId: prompt ? await chats.start(bot, { prompt }) : await chats.newChat(bot) };
+  });
+  server.handle(botWorkspacesRpc, async (_input, context) => {
+    attach(context);
+    return { workspaces: (await chats.workspaces()).map(({ workspaceId, bot }) => ({ workspaceId, botId: bot.id, name: bot.name, avatar: bot.avatar })) };
+  });
+  server.handle(chatBotRpc, async ({ agentId }, context) => {
+    attach(context);
+    return { botId: await host.botIdOf(agentId) };
   });
   server.handle(proposalGetRpc, async ({ id }) => ({ proposal: await getProposal(id) }));
   server.handle(proposalAcceptRpc, ({ id }) => acceptProposal(id));
@@ -169,7 +177,29 @@ export default function contribute(server: PluginServerContext) {
   server.handle(importBotRpc, importBot);
   server.handle(exportTeamRpc, async (input) => exportTeam(input, await library()));
   server.handle(importTeamRpc, importTeam);
-  server.handle(uploadRpc, saveUpload);
+  // Any agent made in a bot's folder is that bot's chat, however it was started (Paseo's New agent included).
+  server.before("agent.create", async ({ request }, context) => {
+    host.attach(context.paseo);
+    try {
+      const config = await chats.onCreate(request.config);
+      return config ? { ...request, config } : undefined;
+    } catch (error) {
+      console.error("paseo-bots: couldn't set up a bot chat; it starts with Paseo's defaults", error);
+      return undefined;
+    }
+  });
+  // A bot chat started outside the plugin gets its tools and connected apps whenever its session opens.
+  server.before("agent.session_open", async ({ request }, context) => {
+    host.attach(context.paseo);
+    if (request.purpose === "history") return undefined;
+    try {
+      const servers = await chats.sessionServers(request);
+      return servers && Object.keys(servers).length > 0 ? { ...request, mcpServers: { ...request.mcpServers, ...servers } } : undefined;
+    } catch (error) {
+      console.error("paseo-bots: couldn't add the bot tools to a chat", error);
+      return undefined;
+    }
+  });
   server.on("agent.turn_started", async (event, context) => {
     host.attach(context.paseo);
     await turnStarted(host, journal, event).catch((error: unknown) => console.error("paseo-bots: couldn't check memory before a turn", error));
@@ -192,6 +222,8 @@ export default function contribute(server: PluginServerContext) {
   });
 
   return () => {
+    stopWatchingBots();
+    chats.stop();
     scheduler.stop();
     relay.stop();
   };

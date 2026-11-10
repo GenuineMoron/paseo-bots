@@ -149,7 +149,7 @@ export function MemorySection({ colors, bot, localHost }: PanelProps) {
               label="Folder"
               hint={data.folder.replace(/^\/(?:Users|home)\/[^/]+/, "~")}
               actionLabel="Copy"
-              onPress={() => void copyText(data.folder).then(() => toast.show("Path copied", { variant: "success" }))}
+              onPress={() => void copyText(data.folder).then(() => toast.show("Path copied", { variant: "success" }), () => toast.error("Unable to copy"))}
             />
           ) : null}
         </SettingsCard>
@@ -263,7 +263,12 @@ function MemorySheet({ colors, botId, name, onChanged, onClose }: { colors: Colo
   const destroy = async () => {
     const confirmed = await confirmDialog({ title: "Delete topic file", message: `Delete ${label}? This cannot be undone.`, confirmLabel: "Delete", destructive: true });
     if (!confirmed) return;
-    await remove({ botId, name });
+    try {
+      await remove({ botId, name });
+    } catch (error) {
+      toast.error(`Couldn't delete ${label}: ${errorText(error)}`);
+      return;
+    }
     onChanged();
     onClose();
   };

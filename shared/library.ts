@@ -83,9 +83,16 @@ export function setBotUses(bot: Bot, kind: LibraryKind, id: string, on: boolean)
   return next === current ? bot : { ...bot, [key]: next };
 }
 
-/** Takes a deleted item's id off every bot. */
-export function forgetItem(bots: readonly Bot[], kind: LibraryKind, id: string): Bot[] {
-  return bots.map((bot) => setBotUses(bot, kind, id, false));
+/**
+ * Takes a deleted item's id off every bot. A deleted MCP server's "server/tool" grants go too:
+ * left behind, they would pre-approve the tools of any later server given the same name.
+ */
+export function forgetItem(bots: readonly Bot[], kind: LibraryKind, id: string, name?: string): Bot[] {
+  const prefix = kind === "mcp" && name ? `${name}/` : null;
+  return bots.map((bot) => {
+    const next = setBotUses(bot, kind, id, false);
+    return prefix && next.alwaysAllow.some((grant) => grant.startsWith(prefix)) ? { ...next, alwaysAllow: next.alwaysAllow.filter((grant) => !grant.startsWith(prefix)) } : next;
+  });
 }
 
 /** Rewrites "old/tool" grants after a server is renamed so they keep matching. */

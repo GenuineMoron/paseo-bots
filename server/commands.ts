@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { redactSecrets } from "../shared/activity";
 import { pluginDataPath } from "./bot-home";
+import { JsonFile } from "./json-file";
 
 // OpenMausBot's command allowlist: an exact command in an exact folder that a
 // bot may run without asking, saved from the command's approval card. Rules
@@ -19,9 +19,15 @@ export interface CommandRule {
 
 type StoredRule = CommandRule & { botId: string };
 
-function storePath(): string {
-  return join(pluginDataPath(), "commands.json");
-}
+const store = new JsonFile<{ version: 1; rules: StoredRule[] }>(
+  () => join(pluginDataPath(), "commands.json"),
+  () => ({ version: 1, rules: [] }),
+  (raw) => {
+    const rules = (raw as { rules?: unknown }).rules;
+    if (!Array.isArray(rules)) throw new Error("not a commands file");
+    return { version: 1, rules: rules as StoredRule[] };
+  },
+);
 
 /** Throws a message the person can act on when a rule can't be saved. */
 function validateRule(command: string, cwd: string): void {
@@ -33,27 +39,15 @@ function validateRule(command: string, cwd: string): void {
 }
 
 export class CommandAllowlist {
-  private queue: Promise<unknown> = Promise.resolve();
-
-  private async load(): Promise<StoredRule[]> {
-    try {
-      const saved = JSON.parse(await readFile(storePath(), "utf8")) as { rules?: StoredRule[] };
-      return Array.isArray(saved.rules) ? saved.rules : [];
-    } catch {
-      return [];
-    }
+  private change<T>(edit: (rules: StoredRule[]) => { rules: StoredRule[]; result: T }): Promise<T> {
+    return store.update((current) => {
+      const { rules, result } = edit(current.rules);
+      return { value: { version: 1, rules }, result };
+    });
   }
 
-  private change<T>(edit: (rules: StoredRule[]) => { rules: StoredRule[]; result: T }): Promise<T> {
-    const run = async () => {
-      const { rules, result } = edit(await this.load());
-      await mkdir(pluginDataPath(), { recursive: true });
-      await writeFile(storePath(), JSON.stringify({ version: 1, rules }, null, 2), { encoding: "utf8", mode: 0o600 });
-      return result;
-    };
-    const next = this.queue.then(run);
-    this.queue = next.catch(() => {});
-    return next;
+  private async load(): Promise<StoredRule[]> {
+    return (await store.read()).rules;
   }
 
   async list(botId: string): Promise<CommandRule[]> {

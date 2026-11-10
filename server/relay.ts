@@ -111,6 +111,12 @@ export class Relay {
       if (port !== state.port) await writeState({ port });
       return port;
     })();
+    // A start that failed isn't kept: the next caller tries again instead of getting the same rejection.
+    this.listening.catch(() => {
+      this.listening = null;
+      this.server?.close();
+      this.server = null;
+    });
     return this.listening;
   }
 
