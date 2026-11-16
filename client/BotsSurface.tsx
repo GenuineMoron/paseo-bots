@@ -31,7 +31,8 @@ import { TeamMap } from "./teams/TeamMap";
 import { TeamSheet } from "./teams/TeamSheet";
 import { TeamTabsRow, TeamTabSwitcher } from "./teams/TeamTabs";
 import { ResizeHandle, SlideOver } from "./ui/Columns";
-import { fitColumns } from "../shared/layout";
+import { hasTouchScreen } from "./web";
+import { fitColumns, isTouchLayout } from "../shared/layout";
 import { confirmDialog, errorText, nativeTokens } from "./native";
 import { MenuProvider, useMenu } from "./ui/Menu";
 import { useTooltipTheme } from "./ui/Tooltip";
@@ -457,7 +458,7 @@ function BotsSurfaceContent({ theme, layout, host, navigation, focusedBotId }: B
       hiddenArchivedCount={listUi.showArchived ? 0 : archivedCount}
       ui={focusedBotId ? { ...listUi, collapsed: focusedCollapsed ? [focusedBotId] : [] } : listUi}
       localHost={localHost}
-      touch={layout.compact || layout.platform !== "web"}
+      touch={isTouchLayout(layout, hasTouchScreen())}
       splash={layout.compact}
       bottomInset={bottomInset}
       onToggle={(botId) => focusedBotId ? setFocusedCollapsed((value) => !value) :

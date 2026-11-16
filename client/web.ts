@@ -106,3 +106,10 @@ export async function squareImage(source: string, size: number): Promise<string>
   context.drawImage(image, (image.naturalWidth - side) / 2, (image.naturalHeight - side) / 2, side, side, 0, 0, size, size);
   return canvas.toDataURL("image/webp", 0.85);
 }
+
+/** A touch screen is present (an iPad, a touch laptop), even next to a mouse or trackpad. */
+export function hasTouchScreen(): boolean {
+  if (!web) return false;
+  const host = globalThis as { matchMedia?: (query: string) => { matches: boolean }; navigator?: { maxTouchPoints?: number } };
+  return Boolean(host.matchMedia?.("(any-pointer: coarse)").matches) || (host.navigator?.maxTouchPoints ?? 0) > 0;
+}
