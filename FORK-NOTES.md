@@ -65,6 +65,24 @@ its recipes are updated for the native chat view.
 - In a bot's workspace, Paseo's "+" tab always gives the bot's provider, whatever the picker says.
 - Skill review hashes SKILL.md only, not the other files in a skill folder.
 
+## Upstream review (2026-11-22)
+
+Upstream main up to `ae40671` (npm 0.3.1). A full merge conflicts in 65 files, mostly upstream's own
+chat view, which this fork replaced with Paseo's. Taken:
+
+- `34f6b79` bot row actions stay visible on touch screens (an iPad in the browser), cherry-picked.
+- The idea of `c58040c`: "Set up with the bot" titles its chat "Setup", threaded through `bots.chat.new`.
+
+Skipped, with the reason:
+
+- `2b53327` (setup chat when the new chat is open), `cfca663`, `0affbd8`, `afde1cc`: fixes to upstream's
+  chat view, which this fork doesn't have.
+- `a2a8493` (polish across 165 files), `2c460f9` (desktop removal): mostly that chat view and the
+  desktop feature, which this fork never had.
+- `5d7017a`, `35d07de` (delegated work between bots), `a8e5f2a` (notify after proposal decisions),
+  `e794160` (OAuth for remote MCP servers, ~3,100 lines plus dependencies): need Bot tools, which the
+  Hermes bots run without. Worth another look if a non-Hermes bot with Bot tools is added.
+
 ## Credits
 
 - [oliexe/paseo-bots](https://github.com/oliexe/paseo-bots), the original plugin (MIT).

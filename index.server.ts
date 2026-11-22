@@ -144,11 +144,11 @@ export default function contribute(server: PluginServerContext) {
   server.handle(appsDisconnectRpc, disconnect);
   server.handle(appsRenameRpc, renameAccount);
   server.handle(appsToolsRpc, appTools);
-  server.handle(chatNewRpc, async ({ botId, prompt }, context) => {
+  server.handle(chatNewRpc, async ({ botId, prompt, title }, context) => {
     attach(context);
     const bot = await host.bot(botId);
     if (!bot || bot.archived) throw new Error("That bot no longer exists.");
-    return { agentId: prompt ? await chats.start(bot, { prompt }) : await chats.newChat(bot) };
+    return { agentId: prompt ? await chats.start(bot, { prompt, ...(title ? { title } : {}) }) : await chats.newChat(bot) };
   });
   server.handle(botWorkspacesRpc, async (_input, context) => {
     attach(context);

@@ -24,7 +24,7 @@ export const ensureBotHomeRpc = defineRpc({
 /** Starts a chat with a bot, ready to open in Paseo's chat view. Without a prompt, the bot's untouched new chat is reused. */
 export const chatNewRpc = defineRpc({
   name: "bots.chat.new",
-  input: z.object({ botId: BotId, prompt: z.string().max(100_000).optional() }),
+  input: z.object({ botId: BotId, prompt: z.string().max(100_000).optional(), title: z.string().max(200).optional() }),
   output: z.object({ agentId: z.string() }),
 });
 

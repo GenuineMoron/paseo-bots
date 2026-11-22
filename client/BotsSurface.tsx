@@ -218,8 +218,8 @@ function BotsSurfaceContent({ theme, layout, host, navigation, focusedBotId }: B
   const openChat = (bot: Bot, chatId: string) => chatActions.open(resolveHost(bot.hostId), chatId);
 
   /** Starts a chat with the bot (empty, or with a first message) and opens it. Edits are saved first. */
-  const newChat = (bot: Bot, prompt?: string) =>
-    void flush().then(() => chatActions.startAndOpen(bot, resolveHost(bot.hostId), library, prompt));
+  const newChat = (bot: Bot, prompt?: string, title?: string) =>
+    void flush().then(() => chatActions.startAndOpen(bot, resolveHost(bot.hostId), library, prompt, title));
 
   const defaultProvider = () => {
     const ready = (localProviders.data ?? []).filter((entry) => entry.status === "ready");
@@ -521,7 +521,7 @@ function BotsSurfaceContent({ theme, layout, host, navigation, focusedBotId }: B
           setPanelVersion((version) => version + 1);
           toast.show("Restored. Undo it from History if needed.", { variant: "success" });
         }}
-        onSetup={() => newChat(panelBot, SETUP_PROMPT)}
+        onSetup={() => newChat(panelBot, SETUP_PROMPT, "Setup")}
         onOpenChat={(chatId) => openChat(panelBot, chatId)}
       />
     ) : null;

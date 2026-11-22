@@ -36,9 +36,9 @@ export function useBotChatActions(navigation: Navigation) {
   };
 
   /** A chat on this host comes from the plugin, which gives it the bot's tools; elsewhere it's made through that host. */
-  const start = async (bot: Bot, host: BotHost, library: Library, prompt?: string): Promise<string> => {
+  const start = async (bot: Bot, host: BotHost, library: Library, prompt?: string, title?: string): Promise<string> => {
     if (!host.api) throw new Error(`${host.label} is offline.`);
-    if (host.isLocal) return (await newChat({ botId: bot.id, ...(prompt ? { prompt } : {}) })).agentId;
+    if (host.isLocal) return (await newChat({ botId: bot.id, ...(prompt ? { prompt } : {}), ...(title ? { title } : {}) })).agentId;
     const home = await ensureHome({ botId: bot.id });
     const { systemPrompt } = await compose({ bot, local: false, ...(prompt ? { message: prompt } : {}) });
     return startBotChat(host.api, {
@@ -47,17 +47,18 @@ export function useBotChatActions(navigation: Navigation) {
       placement: bot.cwd ? { path: bot.cwd, projectRoot: null } : { path: home.path, projectRoot: home.root },
       systemPrompt,
       ...(prompt ? { prompt } : {}),
+      ...(title ? { title } : {}),
     });
   };
 
   return {
     open,
     /** Starts a chat (with a first message, or empty and waiting) and opens it. A second press while one starts does nothing. */
-    async startAndOpen(bot: Bot, host: BotHost, library: Library, prompt?: string): Promise<void> {
+    async startAndOpen(bot: Bot, host: BotHost, library: Library, prompt?: string, title?: string): Promise<void> {
       if (starting.current.has(bot.id)) return;
       starting.current.add(bot.id);
       try {
-        const agentId = await start(bot, host, library, prompt);
+        const agentId = await start(bot, host, library, prompt, title);
         void refreshChats(queryClient, host.key);
         open(host, agentId);
       } catch (error) {
